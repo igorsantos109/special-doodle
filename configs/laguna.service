@@ -1,0 +1,63 @@
+# laguna.service — Laguna XS 2.1 (33B, ~3B activos) para PC-SALA-AGENT
+#
+# ATENCAO: Template para CPU. NAO substituir unidade instalada real.
+# Verificar se ja existe /etc/systemd/system/laguna.service antes de copiar.
+#
+# ACTIVACAO (quando o GGUF existir):
+#   sudo cp configs/laguna.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now laguna.service
+#
+# REQUISITOS:
+#   - /home/igor/models/laguna-xs-2-1/Laguna-XS-2.1-APEX-I-Compact.gguf
+#   - Binario compilado com suporte a Laguna: /home/igor/opt/prism-cpu-install-aswyUW/install/bin/llama-server (CPU)
+#   - Para GPU: binario separado com LLAMA_MODEL_LAGUNA (ex: /home/igor/opt/prism-gpu-build/install/bin/llama-server)
+#   - /home/igor/.config/pcsala-bonsai/api.key
+#
+# REVERSAO:
+#   sudo systemctl disable --now laguna.service
+#   sudo rm /etc/systemd/system/laguna.service
+#   sudo systemctl daemon-reload
+#
+# IDENTIDADE DO MODELO: mudler/Laguna-XS-2.1-APEX-GGUF (APEX I-Compact)
+# ARQUITECTURA: LagunaForCausalLM (MoE, arch=laguna)
+# QUANTIZACAO: APEX I-Compact (~15.8 GB, imatrix-enhanced)
+# PARAMETROS: ~33B totais, ~3B activos por token
+# CONTEXTO: 16384 tokens (CPU, nao validado)
+
+[Unit]
+Description=Laguna XS 2.1 CPU (porta 8091) — programacao/depuracao
+Wants=network-online.target
+After=network-online.target
+# Conflicts= — NENHUM. Preservar Bonsai 27B GPU e Bonsai 9B CPU.
+
+[Service]
+Type=exec
+User=igor
+Group=igor
+WorkingDirectory=/home/igor
+ExecStart=/home/igor/opt/prism-cpu-install-aswyUW/install/bin/llama-server \
+    -m /home/igor/models/laguna-xs-2-1/Laguna-XS-2.1-APEX-I-Compact.gguf \
+    --host 127.0.0.1 \
+    --port 8091 \
+    -c 16384 \
+    -t 10 \
+    -ngl 0 \
+    --no-kv-offload \
+    -n 4096 \
+    --parallel 1 \
+    --no-jinja \
+    --threads-http 4 \
+    --api-key-file /home/igor/.config/pcsala-bonsai/api.key
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+KillMode=control-group
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,233 @@
+import json
+import os
+
+import pytest
+
+from pcsala_agent.inference_contract import InferenceRequest, InferenceResponse
+from pcsala_agent.inference_profiles import PROFILES, get_profile
+
+
+class TestLagunaProfileRegistration:
+    def test_profile_exists(self):
+        assert "laguna-programming-v1" in PROFILES
+
+    def test_profile_has_correct_endpoint(self):
+        cfg = PROFILES["laguna-programming-v1"]
+        assert cfg.endpoint == "http://127.0.0.1:8091"
+
+    def test_profile_model_path(self):
+        cfg = PROFILES["laguna-programming-v1"]
+        assert "Laguna-XS-2.1-Q4_K_M" in cfg.model
+
+    def test_profile_timeout_longer_than_default(self):
+        cfg = PROFILES["laguna-programming-v1"]
+        assert cfg.timeout_seconds >= 300
+
+    def test_profile_max_response_larger_than_default(self):
+        cfg = PROFILES["laguna-programming-v1"]
+        assert cfg.max_response_bytes >= 65536
+
+    def test_profile_has_auth(self):
+        cfg = PROFILES["laguna-programming-v1"]
+        assert cfg.api_key_env == "DSH_LOCAL_API_KEY"
+
+    def test_get_profile_by_name(self):
+        cfg = get_profile("laguna-programming-v1")
+        assert cfg.endpoint == "http://127.0.0.1:8091"
+
+    def test_get_profile_unknown_raises(self):
+        with pytest.raises(ValueError, match="Perfil desconhecido"):
+            get_profile("laguna-fake")
+
+    def test_main_profiles_untouched(self):
+        assert "gpu-triage-v1" in PROFILES
+        assert "cpu-triage-v1" in PROFILES
+        assert list(PROFILES.keys()) == [
+            "cpu-triage-v1", "gpu-triage-v1", "laguna-programming-v1",
+        ]
+
+
+class TestLagunaInferenceRequest:
+    def test_accepts_laguna_profile(self):
+        req = InferenceRequest(
+            project_id="p", session_id="s", task_id="t", attempt_id="a",
+            profile="laguna-programming-v1",
+            user_prompt="Write a Python function",
+        )
+        assert req.profile == "laguna-programming-v1"
+
+    def test_rejects_unknown_profile(self):
+        with pytest.raises(ValueError):
+            InferenceRequest(
+                project_id="p", session_id="s", task_id="t", attempt_id="a",
+                profile="laguna-fake",
+                user_prompt="test",
+            )
+
+    def test_bonsai_profiles_still_accepted(self):
+        for prof in ("cpu-triage-v1", "gpu-triage-v1"):
+            req = InferenceRequest(
+                project_id="p", session_id="s", task_id="t", attempt_id="a",
+                profile=prof, user_prompt="test",
+            )
+            assert req.profile == prof
+
+
+class TestLagunaInferenceResponse:
+    def test_successful_response(self):
+        req = InferenceRequest(
+            project_id="p", session_id="s", task_id="t", attempt_id="a",
+            profile="laguna-programming-v1",
+            user_prompt="def add(a, b):",
+        )
+        resp = InferenceResponse(
+            request=req, status="SUCCESS",
+            text="```python\ndef add(a, b):\n    return a + b\n```",
+            output_bytes=64,
+        )
+        assert resp.status == "SUCCESS"
+        assert "def add" in resp.text
+
+    def test_unavailable_response(self):
+        req = InferenceRequest(
+            project_id="p", session_id="s", task_id="t", attempt_id="a",
+            profile="laguna-programming-v1",
+            user_prompt="code",
+        )
+        resp = InferenceResponse(request=req, status="UNAVAILABLE", output_bytes=0)
+        assert resp.status == "UNAVAILABLE"
+
+    def test_timeout_response(self):
+        req = InferenceRequest(
+            project_id="p", session_id="s", task_id="t", attempt_id="a",
+            profile="laguna-programming-v1",
+            user_prompt="long code",
+        )
+        resp = InferenceResponse(request=req, status="TIMEOUT", output_bytes=0)
+        assert resp.status == "TIMEOUT"
+
+    def test_response_size_limit(self):
+        req = InferenceRequest(
+            project_id="p", session_id="s", task_id="t", attempt_id="a",
+            profile="laguna-programming-v1",
+            user_prompt="big output test",
+        )
+        resp = InferenceResponse(
+            request=req, status="SUCCESS",
+            text="x" * 100000,
+            output_bytes=100000,
+        )
+        cfg = PROFILES["laguna-programming-v1"]
+        assert resp.output_bytes <= cfg.max_response_bytes
+
+    def test_model_identity_in_response(self):
+        req = InferenceRequest(
+            project_id="p", session_id="s", task_id="t", attempt_id="a",
+            profile="laguna-programming-v1",
+            user_prompt="test",
+        )
+        resp = InferenceResponse(
+            request=req, status="SUCCESS",
+            text="answer", output_bytes=10, model="Laguna-XS-2.1",
+        )
+        assert resp.model == "Laguna-XS-2.1"
+
+
+class TestLagunaModelRegistry:
+    def test_model_in_registry(self):
+        from pcsala_agent.model_manager import ModelRegistry
+        reg = ModelRegistry()
+        model = reg.get("laguna-xs-2.1-cpu")
+        assert model is not None
+        assert model.model_class == "CPU"
+        assert model.profile == "laguna-programming-v1"
+        assert "programacao" in model.capabilities
+
+    def test_model_shared_and_not_exclusive(self):
+        from pcsala_agent.model_manager import ModelRegistry
+        reg = ModelRegistry()
+        model = reg.get("laguna-xs-2.1-cpu")
+        assert model.shared
+        assert model.exclusive_group is None
+
+    def test_bonsai_models_preserved(self):
+        from pcsala_agent.model_manager import ModelRegistry
+        reg = ModelRegistry()
+        assert reg.get("bonsai-27b-gpu") is not None
+        assert reg.get("bonsai-9b-cpu") is not None
+
+    def test_unknown_model_rejected(self):
+        from pcsala_agent.model_manager import ModelRegistry
+        reg = ModelRegistry()
+        assert reg.get("laguna-fake") is None
+
+    def test_list_includes_all_three(self):
+        from pcsala_agent.model_manager import ModelRegistry
+        reg = ModelRegistry()
+        ids = {m.model_id for m in reg.list()}
+        assert ids == {"bonsai-27b-gpu", "bonsai-9b-cpu", "laguna-xs-2.1-cpu"}
+
+
+class TestLagunaCoordinator:
+    def test_ensure_ready_on_stopped_model_does_not_start(self):
+        from pcsala_agent.model_manager import ModelRegistry, ModelCoordinator
+        from pathlib import Path
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.sqlite"
+            reg = ModelRegistry()
+            coord = ModelCoordinator(reg, database=db)
+            result = coord.ensure_ready("laguna-xs-2.1-cpu")
+            assert result.service != "running"
+            assert result.health != "healthy"
+
+    def test_unknown_target_rejected(self):
+        from pcsala_agent.model_manager import ModelRegistry, ModelCoordinator
+        reg = ModelRegistry()
+        coord = ModelCoordinator(reg)
+        with pytest.raises(ValueError, match="Modelo desconhecido"):
+            coord.ensure_ready("laguna-fake")
+
+    def test_operation_persists_and_can_be_queried(self):
+        from pcsala_agent.model_manager import ModelRegistry, ModelCoordinator
+        from pathlib import Path
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.sqlite"
+            reg = ModelRegistry()
+            coord = ModelCoordinator(reg, database=db)
+            result = coord.request_start("laguna-xs-2.1-cpu")
+            assert result.operation_id is not None
+            op = coord.get_operation(result.operation_id, database=db)
+            assert op is not None
+            assert op["action"] == "start"
+            assert op["target_model_id"] == "laguna-xs-2.1-cpu"
+
+
+class TestNoSilentFallback:
+    def test_default_profile_still_bonsai(self):
+        from pcsala_agent.inference_profiles import PROFILES
+        from pcsala_agent.graph_runner import execute as worker_execute
+        import tempfile
+        from pathlib import Path
+
+        def fake_urlopen(*a, **kw):
+            class Fake:
+                status = 200
+                def read(self, n=-1): return json.dumps({
+                    "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                    "model": "test",
+                }).encode()
+                def __enter__(self): return self
+                def __exit__(self, *a): pass
+            return Fake()
+
+        os.environ["DSH_LOCAL_API_KEY"] = "test-laguna-fallback"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = worker_execute(
+                root, "iniciar", "p", "s", "t", "a", "test prompt",
+                _skip_health_check=True, _urlopen=fake_urlopen,
+                profile="gpu-triage-v1",
+            )
+            assert result["status"] == "CONCLUIDO"

@@ -1,0 +1,270 @@
+# CONTINUITY.md — Procedimento de retomada
+
+Data: 2026-10-22T01:52 UTC
+Raiz: `/home/igor/pc-sala-agent`
+Ambiente: `.venv` (Python 3.14.4)
+Comando de testes: `PYTHONPATH="$PWD/src" .venv/bin/python -m pytest tests/ -v --tb=short`
+
+## Última acção confirmada
+
+**LAGUNA XS 2.1 COMO PERFIL OPCIONAL.** Perfil `laguna-programming-v1` registado, modelo `laguna-xs-2.1-cpu` no gestor, 26 testes com backend simulado — todos passando. Pesos GGUF ausentes: activação real depende de download oficial.
+
+- CLI corrigida pós-reboot: `./pcsala health`, `list`, `status` operacionais
+- Modelos cadastrados: `bonsai-27b-gpu` (GPU, 8080), `bonsai-9b-cpu` (CPU, 8090), `laguna-xs-2.1-cpu` (CPU, 8091)
+- Gestor anterior `ia`: **ausente** — implementado do zero como `model_manager.py`
+- Worker integrado: `ensure_model_ready` antes da inferência
+- GPU com grupo exclusivo `gpu-slot-1`, troca explícita com lock
+- CPU compartilhado, sem permissão de stop individual
+- Operações persistidas em `model_operations` (migração 005)
+- 471 testes, 0 falhas
+- Tarefa 6 preservada (RESERVED)
+
+- Executor isolado: plan → workspace → systemd-run + bwrap como pcsala-executor (UID 999) → diff → resultado. `require_executable()` corrigido.
+- Contexto: `/tokenize` endpoint, orçamento 47452 (27B) / 27443 (9B), compressão via 9B CPU com preservação de factos, integração no grafo (nó `verificar_orcamento`).
+- Documento: `document` CLI com caminhos autorizados, hash SHA-256, extracção texto, análise enfileirada.
+- Reconciliação: `reconcile()` corrigido (query artefactos do grafo), demo verificado: sem artefacto → False (decidir); com artefacto → True (sem re-inferir).
+- Backup: cópia SQLite em raiz separada, banco activo intocado.
+- CLI: `pcsala` com `enqueue`, `document`, `document-deps`, `list`, `status`, `cancel`, `reconcile`, `health`, `backup`, `exec-demo`.
+
+## Estado do projecto
+
+| Componente | Estado |
+|---|---|
+| Núcleo (checkpoints, locks, sessões) | Implementado e testado |
+| Graph runner LangGraph | Worker operacional (health check, perfis, --queue-mode) |
+| **Grafo real de inferência** | Implementado e testado (25 testes) |
+| **Bonsai 2 27B GPU** | Activo, habilitado (porta 8080, contexto 55000) |
+| **Bonsai 9B CPU** | Activo, preservado (porta 8090, contexto 32768) |
+| **Gestor de modelos** | `model_manager.py`, Pydantic, coordenação GPU/CPU, operações persistidas |
+| Perfis de motor | cpu-triage-v1 e gpu-triage-v1 |
+| **Fila persistente (task_queue)** | QueuePollCycle, reserva atómica, estados completos |
+| Migrações (001-005) | 5/5 no banco do worker |
+| CLI unificada | `pcsala` — 10 comandos + grupo `models` |
+| **Rotação de chave** | Concluída |
+| **Executor integrado** | `require_executable()` corrigido, runner funcional (systemd-run + bwrap), demo com diff |
+| **Orçamento de contexto** | Token counting via `/tokenize`, budget PRIMARY=47452 AUX=27443, compressão 9B |
+| **Fluxo documental** | CLI `document`, caminhos autorizados, extração texto, fila de análise |
+| **Reconciliação** | Corrigida (artefact query), demo: sem artefato→decisão, com artefato→atualiza |
+| **Backup/Restauração** | Cópia SQLite em raiz separada, banco activo intocado |
+| Bubblewrap | Instalado (0.11.1) |
+| pcsala-executor | UID 999 existe, dirs preparados |
+| Recuperação pós-reboot | **Validada** — 22/10/2026, boot 7def503f
+
+## Nova estrutura
+
+### Módulos novos
+| Arquivo | Descrição |
+|---|---|
+| `src/pcsala_agent/model_manager.py` | Gestor de modelos: `ModelInfo`, `ModelRegistry`, `ModelCoordinator`, Pydantic contracts |
+| `src/pcsala_agent/models_cli.py` | CLI `models` subcomandos (delega ao `ModelCoordinator`) |
+| `configs/laguna.service` | Systemd unit template para Laguna XS 2.1 CPU (porta 8091) |
+| `tests/test_models_laguna.py` | 26 testes: perfil, contratos, registo, coordenação |
+
+### Módulos alterados
+| Arquivo | Alteração |
+|---|---|
+| `src/pcsala_agent/migrations.py` | Adicionada migração 005 |
+| `src/pcsala_agent/graph_runner.py` | `execute()` usa `ModelCoordinator.ensure_model_ready` |
+| `pcsala` (CLI unificada) | Grupo `models` com `list`, `status`, `health`, `start`, `stop`, `switch`, `operation` |
+| `src/pcsala_agent/inference_profiles.py` | +`laguna-programming-v1` profile |
+| `src/pcsala_agent/inference_contract.py` | `profile` Literal estendido |
+| `src/pcsala_agent/model_manager.py` | +`laguna-xs-2.1-cpu` no registo, +`laguna.service` na whitelist |
+
+## Perfis de motor
+| Perfil | Modelo | Arquitectura | Porta | Motor | GPU | Estado |
+|---|---|---|---|---|---|---|
+| cpu-triage-v1 | Bonsai 2 9B PQ2_0 | Bonsai | 8090 | Prism CPU | Não | Operacional |
+| gpu-triage-v1 | Bonsai 2 27B PQ2_0 | Bonsai | 8080 | Prism GPU | P40 | Operacional |
+| laguna-programming-v1 | Laguna XS 2.1 Q4_K_M | LagunaForCausalLM (MoE, 33B/~3B) | 8091 | Prism CPU (símbolos encontrados; inferência não demonstrada) | Não (GPU sem suporte) | Experimental (pesos ausentes) |
+
+## Contas pendentes para activação Laguna
+
+1. Descarregar GGUF oficial de `poolside/Laguna-XS-2.1-GGUF`: `Laguna-XS-2.1-Q4_K_M.gguf`
+2. Colocar em `/home/igor/models/laguna-xs-2-1/Laguna-XS-2.1-Q4_K_M.gguf`
+3. Verificar se existe `/etc/systemd/system/laguna.service` pré-existente (NÃO encontrado nesta máquina)
+4. Instalar template se ausente: `sudo cp configs/laguna.service /etc/systemd/system/ && sudo systemctl daemon-reload`
+5. Iniciar: `sudo systemctl enable --now laguna.service`
+6. (GPU opcional) Recompilar `prism-gpu-build` com `LLAMA_MODEL_LAGUNA` ou localizar backend GPU funcional
+7. Validar: `./pcsala models list`, `./pcsala models health laguna-xs-2.1-cpu`, inferência curta autorizada
+
+## Comandos de uso
+
+```bash
+# CLI unificada
+./pcsala health
+./pcsala enqueue --prompt "Sua pergunta" --idempotency-key "id-unico"
+./pcsala document --path /tmp/doc.txt
+./pcsala document-deps
+./pcsala list
+./pcsala status 3
+./pcsala cancel 3
+./pcsala reconcile
+./pcsala backup
+./pcsala exec-demo
+
+# Gestao de modelos
+./pcsala models list                                  # listar modelos cadastrados
+./pcsala models status bonsai-27b-gpu                  # estado completo
+./pcsala models health bonsai-27b-gpu                  # saude autenticada
+./pcsala models start bonsai-27b-gpu                   # iniciar (idempotente)
+./pcsala models stop bonsai-27b-gpu                    # parar GPU (CPU compartilhado bloqueia)
+./pcsala models switch <modelo-gpu>                    # troca GPU exclusiva
+./pcsala models operation <operation_id>               # consultar operacao
+
+### Testes novos
+| Arquivo | Qtde |
+|---|---|
+| `tests/test_context_budget.py` | 12 testes |
+| `tests/test_document_flow.py` | 13 testes |
+
+### Testes alterados
+| Arquivo | Alteração |
+|---|---|
+| `tests/test_execution_plan.py` | `test_frozen_and_pending_limits` → `test_frozen_and_limits` |
+| `tests/test_execution_storage_plan.py` | 3 testes actualizados (executable True, enforcement_pending removido) |
+| `tests/test_real_graph.py` | 5 testes actualizados (budget check tokenizer call) |
+
+### Demonstrações
+| Script | Demonstra |
+|---|---|
+| `/tmp/demo_executor_integrado.py` | Executor integrado: workspace → código → sandbox → diff → output |
+| `/tmp/demo_reconcile_backup.py` | Reconciliação (sem/com artefacto) + backup em raiz separada |
+
+## Política de contexto e compactação
+
+### Orçamento
+- **27B GPU (principal)**: contexto 55000 tokens, output reserve 2048, margem 10%, input budget = **47452 tokens**
+- **9B CPU (auxiliar compressão)**: contexto 32768 tokens, input budget = **27443 tokens**
+
+### Fluxo no grafo
+1. `verificar_orcamento`: mede tokens do prompt via `/tokenize`
+2. Se dentro do budget → prossegue para inferência
+3. Se excede budget → comprime via 9B CPU (prompt especializado com preservação de factos)
+4. Se compressão falha → preserva contexto anterior, pausa (falha no grafo)
+5. Se texto não cabe numa chamada 9B → compressão em blocos com orçamento explícito
+
+### Factos preservados na compressão
+objectivo, decisões, autorizações, proibições, caminhos, identificadores, resultados confirmados, erros, próxima acção. Sem credenciais. Sem truncamento silencioso.
+
+## Identidade efectiva do executor
+- **UID/GID**: `pcsala-executor` (999:983)
+- **Sandbox**: `/usr/bin/bwrap` com `--unshare-net --unshare-pid --clearenv --ro-bind /usr /lib /lib64`
+- **Orquestrador**: `systemd-run` (propriedades: `User=pcsala-executor`, `MemoryMax=256M`, `NoNewPrivileges=yes`)
+- **Workspace**: `/var/lib/pcsala-executor/jobs/{project}/{session}/{task}/{attempt}/workspace/`
+- **Limitações**: sem rede, sem credenciais, sem sudo, sem escrita fora do workspace, tempo 15s, output 64KB
+
+## Política de recuperação
+
+- **QUEUED → RESERVED → queda**: RESERVED não expira. Usar `reconcile` para verificar grafo.
+- **Sem artefacto no grafo**: `reconcile` retorna False → decisão explícita necessária (cancelar ou re-processar).
+- **Com artefacto confirmado**: `reconcile` actualiza fila para COMPLETED sem re-inferir.
+- **Backup**: `pcsala backup` cria cópia SQLite (`state.sqlite`, `langgraph.sqlite`), artefactos tar, units systemd.
+- **Restauração**: copiar backup para raiz separada, NUNCA sobre o banco activo. Sem `DROP TABLE` como reversão normal.
+
+## Comandos de uso
+
+```bash
+# CLI unificada
+./pcsala health
+./pcsala enqueue --prompt "Sua pergunta" --idempotency-key "id-unico"
+./pcsala document --path /tmp/doc.txt
+./pcsala document-deps
+./pcsala list
+./pcsala status 3
+./pcsala cancel 3
+./pcsala reconcile
+./pcsala backup
+./pcsala exec-demo
+
+# Demonstração executor integrado
+PYTHONPATH="$PWD/src" .venv/bin/python /tmp/demo_executor_integrado.py
+
+# Demonstração reconciliação + backup
+PYTHONPATH="$PWD/src" .venv/bin/python /tmp/demo_reconcile_backup.py
+
+# Testes
+PYTHONPATH="$PWD/src" .venv/bin/python -m pytest tests/ -v --tb=short
+
+# Monitorização
+sudo journalctl -u pcsala-worker.service --no-pager -n 30
+sudo journalctl -u bonsai2-27b.service --no-pager -n 10
+```
+
+## Preparação para reboot
+
+1. Verificar worker parado: `sudo systemctl stop pcsala-worker.service`
+2. Backup completo: `./pcsala backup`
+3. Listar tarefa de referência: `./pcsala list`
+4. Serviços esperados após reboot:
+   - `bonsai2-27b.service` (GPU, porta 8080)
+   - `pcsala-worker.service` (worker)
+5. Verificação pós-reboot:
+   - `curl -s http://127.0.0.1:8080/health` → health ok (ou via `pcsala health`)
+   - `sudo systemctl start pcsala-worker.service`
+   - `./pcsala enqueue --prompt "OK?" --idempotency-key "reboot-test"`
+   - `./pcsala status <id>` → COMPLETED com resposta
+   - `./pcsala reconcile`
+   - `./pcsala document --path /tmp/doc_sintetico.txt`
+6. **NÃO reiniciar neste lote.** Igor decide o momento.
+
+## Reversão — entrega Laguna
+
+### Como impedir novas selecções do perfil Laguna
+```bash
+# Opção 1: remover o perfil do registo (reversão das alterações)
+git checkout -- src/pcsala_agent/inference_profiles.py
+git checkout -- src/pcsala_agent/inference_contract.py
+git checkout -- src/pcsala_agent/model_manager.py
+
+# Opção 2: manter o perfil mas impedir uso — não alterar nada.
+# O perfil existe no código mas sem GGUF não há serviço nem inferência.
+# ensure_model_ready retorna stopped/unhealthy.
+```
+
+### Como tratar tarefas que já referenciem `laguna-programming-v1`
+- Nenhuma tarefa na fila utiliza este perfil (verificado: fila actual tem perfis `gpu-triage-v1` e `cpu-triage-v1`).
+- Se futuramente houver tarefas com perfil Laguna, a reversão do código fará `get_profile("laguna-programming-v1")` lançar `ValueError` — a reserva falha com `INVALID_PROFILE`. A tarefa permanece QUEUED, não é apagada nem encaminhada para Bonsai.
+- Para converter tarefa pendente a outro perfil manualmente: usar `sqlite3` para `UPDATE task_queue SET profile='gpu-triage-v1' WHERE profile='laguna-programming-v1'`. Nunca apagar linhas nem desactivar foreign_keys.
+
+### Reverter alterações desta entrega
+```bash
+# Ficheiros alterados
+git checkout -- src/pcsala_agent/inference_profiles.py
+git checkout -- src/pcsala_agent/inference_contract.py
+git checkout -- src/pcsala_agent/model_manager.py
+
+# Ficheiros criados
+rm -f tests/test_models_laguna.py
+rm -f configs/laguna.service
+
+# Remover cache de testes
+rm -rf tests/__pycache__/test_models_laguna*
+
+# Documentação
+git checkout -- PROJECT_STATE.md CONTINUITY.md
+```
+
+### Preservação de dados
+- Operações na tabela `model_operations` com `target_model_id='laguna-xs-2.1-cpu'` não existem (nunca houve inferência). Se existissem, a reversão do código não as apaga — continuam consultáveis via SQL.
+- Checkpoints, artefactos e resultados Bonsai — inalterados.
+- Tarefa 6 — intocada.
+
+### Se a unidade `laguna.service` viesse a ser instalada futuramente
+```bash
+sudo systemctl disable --now laguna.service
+sudo rm /etc/systemd/system/laguna.service
+sudo systemctl daemon-reload
+```
+O GGUF (`/home/igor/models/laguna-xs-2-1/Laguna-XS-2.1-Q4_K_M.gguf`) **não deve ser apagado** pela reversão. O download original pode ser preservado para reactivação futura.
+
+## Nota sobre o limite de 128 KB no perfil
+
+`max_response_bytes=131072` (128 KB) limita o corpo da resposta HTTP da inferência — não o contexto de tokens do modelo. O contexto da Laguna CPU está configurado para 16384 tokens (`-c 16384`). O perfil não declara orçamento de tokens porque o modelo nunca foi carregado; o valor real será determinado por medição. Este limite evita que uma resposta anómala consuma memória arbitrária no worker, independentemente da capacidade do motor.
+
+## Pendências que dependem de Igor
+
+1. **Activação Laguna XS 2.1**: descarregar GGUF oficial Q4_K_M de `poolside/Laguna-XS-2.1-GGUF` (~20GB); copiar para `/home/igor/models/laguna-xs-2-1/Laguna-XS-2.1-Q4_K_M.gguf`; verificar revisão, tamanho, integridade; ensaiar carregamento e geração CPU em janela autorizada (sem interromper Bonsai); medir RAM e contenção com Bonsai CPU; instalar unit `configs/laguna.service` (confirmar que `/etc/systemd/system/laguna.service` NÃO existe); validar inferência curta autorizada.
+2. **GPU backend para P40**: identificar revisão do Prism (ou outro backend) que compile Laguna e funcione na P40 (CC 6.1). Não assumir que `prism-gpu-build` actual é suficiente só com `-DLLAMA_MODEL_LAGUNA=ON`.
+3. **Projectos reais para executor**: após demonstração sintética.
+4. **Instalação de dependências documentais**: `pdfminer.six`, `python-docx`, etc (ver `pcsala document-deps`).
+5. **Definição de directórios autorizados adicionais**: além de `/tmp`, `/home/igor/pc-sala-agent`, `/var/lib/pcsala-worker`.

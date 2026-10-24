@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""CLI unificada do sistema pc-sala-agent.
+
+Uso:
+  pcsala enqueue --prompt "..." [--profile gpu-triage-v1] [--idempotency-key K]
+  pcsala document --path <file> [--profile gpu-triage-v1]
+  pcsala document-deps
+  pcsala list [--status QUEUED|RESERVED|COMPLETED|FAILED|CANCELLED]
+  pcsala status <id>
+  pcsala cancel <id>
+  pcsala reconcile
+  pcsala health
+  pcsala backup
+  pcsala exec-demo
+"""
+import argparse
+import shutil
+import subprocess
+import sys
+import tarfile
+from pathlib import Path
+
+ROOT = Path("/var/lib/pcsala-worker")
+BACKUP_DIR = Path("/home/igor/.config/pcsala-bonsai")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="CLI unificada pc-sala-agent")
+    parser.add_argument("--root", type=Path, default=ROOT,
+                        help="Raiz do worker (default: /var/lib/pcsala-worker)")
+
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    enq = sub.add_parser("enqueue", help="Enfileirar tarefa textual")
+    enq.add_argument("--prompt", required=True)
+    enq.add_argument("--profile", default="gpu-triage-v1")
+    enq.add_argument("--idempotency-key")
+
+    doc = sub.add_parser("document", help="Submeter documento para analise")
+    doc.add_argument("--path", required=True)
+    doc.add_argument("--profile", default="gpu-triage-v1")
+    doc.add_argument("--idempotency-key")
+
+    sub.add_parser("document-deps", help="Listar dependencias sugeridas para extracao")
+
+    lst = sub.add_parser("list", help="Listar tarefas")
+    lst.add_argument("--status")
+
+    st = sub.add_parser("status", help="Consultar tarefa")
+    st.add_argument("id", type=int)
+
+    cn = sub.add_parser("cancel", help="Cancelar tarefa")
+    cn.add_argument("id", type=int)
+
+    sub.add_parser("reconcile", help="Reconciliar tarefas RESERVED")
+
+    sub.add_parser("health", help="Verificar servicos")
+
+    sub.add_parser("backup", help="Criar backup completo")
+
+    sub.add_parser("exec-demo", help="Demonstrar executor integrado")
+
+    args = parser.parse_args()
+
+    if args.command == "enqueue":
+        _run_module("pcsala_agent.queue_cli",
+                    ["--root", str(args.root), "enqueue",
+                     "--prompt", args.prompt,
+                     "--profile", args.profile,
+                     *(["--idempotency-key", args.idempotency_key]
+                       if args.idempotency_key else [])])
+        return
+
+    if args.command == "document":
+        _run_module("pcsala_agent.queue_cli",
+                    ["--root", str(args.root), "document",
+                     "--path", args.path,
+                     "--profile", args.profile,
+                     *(["--idempotency-key", args.idempotency_key]
+                       if args.idempotency_key else [])])
+        return
+
+    if args.command == "document-deps":
+        _run_module("pcsala_agent.queue_cli",
+                    ["--root", str(args.root), "document-deps"])
+        return
+
+    if args.command == "list":
+        cmd = ["--root", str(args.root), "list"]
+        if args.status:
+            cmd += ["--status", args.status]
+        _run_module("pcsala_agent.queue_cli", cmd)
+        return
+
+    if args.command == "status":
+        _run_module("pcsala_agent.queue_cli",
+                    ["--root", str(args.root), "status", str(args.id)])
+        return
+
+    if args.command == "cancel":
+        _run_module("pcsala_agent.queue_cli",
+                    ["--root", str(args.root), "cancel", str(args.id)])
+        return
+
+    if args.command == "reconcile":
+        _run_module("pcsala_agent.queue_cli",
+                    ["--root", str(args.root), "reconcile"])
+        return
+
+    if args.command == "health":
+        _run_module("pcsala_agent.queue_cli",
+                    ["--root", str(args.root), "health"])
+        return
+
+    if args.command == "backup":
+        _do_backup(args.root)
+        return
+
+    if args.command == "exec-demo":
+        _run_script("/tmp/demo_executor_integrado.py")
+        return
+
+
+def _run_module(module, args):
+    cmd = [sys.executable, "-m", module, *args]
+    result = subprocess.run(cmd, capture_output=False)
+    sys.exit(result.returncode)
+
+
+def _run_script(path):
+    result = subprocess.run([sys.executable, path], capture_output=False)
+    sys.exit(result.returncode)
+
+
+def _do_backup(root):
+    import sqlite3
+    import time
+    ts = int(time.time())
+    dest = BACKUP_DIR / f"backup-{ts}"
+    dest.mkdir(parents=True, exist_ok=True)
+    print(f"Backup em {dest}...")
+
+    for f in ["state.sqlite", "langgraph.sqlite"]:
+        src = root / f
+        if src.exists():
+            backup = dest / f
+            src_conn = sqlite3.connect(str(src))
+            bak_conn = sqlite3.connect(str(backup))
+            src_conn.backup(bak_conn, pages=-1)
+            bak_conn.close()
+            src_conn.close()
+            backup.chmod(0o600)
+            print(f"  {f}: {backup.stat().st_size} bytes")
+
+    art_dir = root / "artifacts"
+    if art_dir.exists():
+        tar = dest / "artifacts.tar"
+        with tarfile.open(tar, "w") as tf:
+            for p in art_dir.iterdir():
+                tf.add(p, arcname=p.name)
+        tar.chmod(0o600)
+        print(f"  artifacts: {tar.stat().st_size} bytes")
+
+    for f in [
+        "/etc/systemd/system/pcsala-worker.service",
+        "/etc/systemd/system/bonsai2-27b.service",
+    ]:
+        path = Path(f)
+        if path.exists():
+            shutil.copy2(path, dest / path.name)
+            print(f"  {path.name}")
+
+    print("Backup concluido.")
+    return 0
+
+
+if __name__ == "__main__":
+    main()
