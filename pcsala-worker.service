@@ -1,0 +1,27 @@
+[Unit]
+Description=Worker LangGraph pc-sala-agent (fila persistente)
+Wants=network-online.target
+After=bonsai2-27b.service
+
+[Service]
+Type=exec
+User=igor
+Group=igor
+WorkingDirectory=/home/igor/pc-sala-agent
+EnvironmentFile=/home/igor/.config/pcsala-bonsai/dsh.env
+Environment=PYTHONPATH=/home/igor/pc-sala-agent/src
+ExecStart=/home/igor/pc-sala-agent/.venv/bin/python \
+    -m pcsala_agent.graph_runner \
+    --root /var/lib/pcsala-worker \
+    --profile gpu-triage-v1 \
+    --queue-mode
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=15s
+KillMode=control-group
+NoNewPrivileges=yes
+PrivateTmp=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

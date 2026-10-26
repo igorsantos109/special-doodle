@@ -1,0 +1,29 @@
+# Ambientes e caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Dados locais e evidencias de execucao
+/registros/
+/data/
+/artifacts/
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+*.db
+*.db-*
+*.lock
+
+# Dependencias fixadas devem permanecer versionadas
+!requirements.lock
+
+# Credenciais locais
+.env
+.env.*
+!.env.example
+*.pem
+*.key
