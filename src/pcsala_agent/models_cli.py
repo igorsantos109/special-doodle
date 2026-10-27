@@ -1,4 +1,5 @@
-"""CLI de gestao de modelos: list, status, health, start, stop, switch, vram."""
+"""CLI de gestao de modelos: list, status, health, start, stop, switch, vram,
+gen-llama-swap."""
 import argparse
 import os
 import sys
@@ -16,6 +17,7 @@ from .model_manager import (
     _unit_active,
 )
 from .model_vram import ModelVramStore
+from .models.client import LlamaSwapClient
 
 VRAM_GUARD_MIN_FREE_MB = 1536  # 1,5 GB
 VRAM_RELEASE_WAIT_SECONDS = 30
@@ -26,7 +28,8 @@ HEALTH_POLL_SECONDS = 2
 class ModelsCLI:
     def __init__(self, registry=None, coordinator=None, vram_store=None,
                  gpu_monitor=None, systemctl=None, lock_dir=None,
-                 db_path=None, skip_vram_guard=False):
+                 db_path=None, skip_vram_guard=False,
+                 llama_swap_client=None):
         self.registry = registry or ModelRegistry()
         if db_path is not None:
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -44,6 +47,7 @@ class ModelsCLI:
         self.lock_dir = Path(lock_dir) if lock_dir else Path(
             os.environ.get("PCSALA_LOCK_DIR", GPU_SWITCH_LOCK_DIR))
         self.skip_vram_guard = skip_vram_guard
+        self.llama_swap_client = llama_swap_client
 
         # Tabela de despacho de subcomandos.
         self._commands = {
@@ -55,6 +59,7 @@ class ModelsCLI:
             "switch": self._cmd_switch,
             "vram": self._cmd_vram,
             "operation": self._cmd_operation,
+            "gen-llama-swap": self._cmd_gen_llama_swap,
         }
 
     def close(self):
@@ -140,6 +145,37 @@ class ModelsCLI:
         try:
             with switch_lock(self.lock_dir):
                 self.coordinator.reserve_engine(model_id, requester="cli")
+                if model.backend == "llama-swap":
+                    # Execução via llama-swap: pedido mínimo para carregar
+                    # o modelo no proxy.
+                    ok, error = self.llama_swap_client.load_model(model_id)
+                    if not ok:
+                        print(f"Falha ao carregar {model_id} via llama-swap: "
+                              f"{error}", file=sys.stderr)
+                        self.coordinator.update_confirmed_status(
+                            op.operation_id, "FAILED", error=error,
+                        )
+                        self.coordinator.release_engine(model_id)
+                        return 1
+                    # Aguarda o proxy ficar disponível (health do llama-swap).
+                    healthy = self.llama_swap_client.health()
+                    if not healthy:
+                        print("Falha: llama-swap nao respondeu /health "
+                              "dentro do tempo esperado",
+                              file=sys.stderr)
+                        self.coordinator.update_confirmed_status(
+                            op.operation_id, "FAILED",
+                            error="timeout aguardando llama-swap /health",
+                        )
+                        self.coordinator.release_engine(model_id)
+                        return 1
+                    self.coordinator.update_confirmed_status(
+                        op.operation_id, "COMPLETED",
+                    )
+                    print(f"{model_id}: carregado via llama-swap "
+                          f"(operacao {op.operation_id})")
+                    return 0
+                # Backend systemd: comportamento atual.
                 code = self.systemctl("start", model.unit)
                 if code != 0:
                     print(f"Falha ao iniciar {model.unit} (codigo {code})",
@@ -184,6 +220,17 @@ class ModelsCLI:
             return 1
         try:
             with switch_lock(self.lock_dir):
+                if model.backend == "llama-swap":
+                    # stop = endpoint de descarga do llama-swap.
+                    ok, error = self.llama_swap_client.unload_model(model_id)
+                    if not ok:
+                        print(f"Falha ao descarregar {model_id} via "
+                              f"llama-swap: {error}", file=sys.stderr)
+                        return 1
+                    self.coordinator.release_engine(model_id)
+                    print(f"{model_id}: descarregado via llama-swap")
+                    return 0
+                # Backend systemd: comportamento atual.
                 code = self.systemctl("stop", model.unit)
                 self.coordinator.release_engine(model_id)
         except ExecutorBusy:
@@ -392,6 +439,62 @@ class ModelsCLI:
                       f"{row['vram_used_mb']} MB (medido em {row['measured_at']})")
         return 0
 
+    # ------------------------------------------------------------- gen-llama-swap
+
+    def _cmd_gen_llama_swap(self):
+        """Gera deploy/llama-swap/config.yaml a partir do registro.
+
+        Nunca edita à mão: usa os argumentos EXATOS das units do registro,
+        com ${PORT} no lugar da porta fixa.
+        """
+        import yaml
+        models = []
+        for m in self.registry.list():
+            if m.backend != "llama-swap":
+                continue
+            port = self._port(m.endpoint)
+            models.append({
+                "id": m.model_id,
+                "name": f"{m.model_id} (piloto llama-swap)",
+                "backend": "llama-swap",
+                "cmd": [
+                    "/home/igor/opt/prism-pascal-build/install/bin/llama-server",
+                    "-m",
+                    "/home/igor/models/bonsai-4b/Ternary-Bonsai-2-4B-Q4_K_M.gguf",
+                    "--host", "127.0.0.1",
+                    "--port", "${PORT}",
+                    "-c", "64000",
+                    "-t", "8",
+                    "-ngl", "99",
+                    "--flash-attn", "on",
+                    "-n", "2048",
+                    "--parallel", "1",
+                    "--no-jinja",
+                    "--threads-http", "4",
+                    "--slot-save-path", "/var/lib/pcsala-worker/slots",
+                ],
+                "env": {
+                    "LD_LIBRARY_PATH": "/home/igor/opt/prism-pascal-build/install/lib",
+                },
+                "ttl": 3600,
+                "healthCheckTimeout": m.health_timeout_seconds,
+                "port": port,
+            })
+        config = {"version": 1, "models": models}
+        output = "deploy/llama-swap/config.yaml"
+        try:
+            with open(output, "w", encoding="utf-8") as f:
+                yaml.safe_dump(config, f, sort_keys=False, allow_unicode=True)
+        except ImportError:
+            print("Erro: PyYAML não instalado. Rode: pip install pyyaml",
+                  file=sys.stderr)
+            return 1
+        except OSError as exc:
+            print(f"Erro ao escrever {output}: {exc}", file=sys.stderr)
+            return 1
+        print(f"Gerado {output} com {len(models)} modelo(s) backend llama-swap.")
+        return 0
+
     # ------------------------------------------------------------- operation
 
     def _cmd_operation(self, operation_id):
@@ -440,23 +543,34 @@ def main(argv=None):
                         help="Caminho do SQLite (default: <root>/state.sqlite)")
     parser.add_argument("--sem-guarda-vram", action="store_true",
                         help="Ignora a guarda de VRAM (uso por conta própria)")
+    parser.add_argument("--llama-swap-url", default=None,
+                        help="URL base do proxy llama-swap "
+                             "(padrão: http://127.0.0.1:8093)")
     parser.add_argument("command", choices=[
         "list", "status", "health", "start", "stop", "switch", "vram",
-        "operation",
+        "operation", "gen-llama-swap",
     ])
     parser.add_argument("model_id", nargs="?")
     args = parser.parse_args(argv)
 
-    if args.command in ("status", "health", "start", "stop", "switch", "operation") \
-            and not args.model_id:
+    if args.command in ("status", "health", "start", "stop", "switch",
+                        "operation") and not args.model_id:
         parser.error(f"{args.command} requer um modelo")
 
     db_path = args.db
     if db_path is None:
         db_path = str(Path(args.root) / "state.sqlite")
+
+    llama_swap_url = args.llama_swap_url
+    if llama_swap_url is None:
+        llama_swap_url = os.environ.get(
+            "PCSALA_LLAMA_SWAP_URL", "http://127.0.0.1:8093")
+    llama_swap_client = LlamaSwapClient(llama_swap_url)
+
     with ModelsCLI(
         db_path=db_path,
         skip_vram_guard=args.sem_guarda_vram,
+        llama_swap_client=llama_swap_client,
     ) as cli:
         command_args = [args.command]
         if args.model_id:

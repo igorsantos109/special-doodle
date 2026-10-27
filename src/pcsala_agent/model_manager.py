@@ -20,6 +20,7 @@ class ModelSpec:
     endpoint: str
     capabilities: tuple
     health_timeout_seconds: int = 600
+    backend: str = "systemd"
 
 
 class ModelRegistry:
@@ -40,6 +41,7 @@ class ModelRegistry:
                 endpoint="http://127.0.0.1:8093",
                 capabilities=("triagem", "resumo"),
                 health_timeout_seconds=120,
+                backend="llama-swap",
             ),
             "bonsai-9b-cpu": ModelSpec(
                 model_id="bonsai-9b-cpu", model_class="CPU",
