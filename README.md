@@ -29,20 +29,22 @@ pcsala models {list,status,health,start,stop,switch,vram,operation}
 
 | Modelo | Porta | Ctx | Gen tok/s | Notas |
 |---|---|---|---|---|
-| Bonsai 27B GPU + MTP | 8080 | 64K | 28-48 | Primario, residente |
+| Bonsai 27B GPU + MTP | 8080 | 64K | 28-48 | Primario, exclusivo (gpu-slot-1) |
 | Bonsai 4B GPU | 8093 | 64K | — | Residente (nao habilitado no boot) |
 | Bonsai 9B CPU | 8090 | 32K | 6.08 | Sem MTP |
 | Laguna XS 2.1 CPU | 8091 | — | — | Desativado (libera RAM) |
-| Laguna XS 2.1 GPU | 8082 | 128K | ~47 | Build Pascal; exclusivo |
-| Ornith 35B GPU | 8092 | — | ~40 | PrismML runtime; exclusivo |
+| Laguna XS 2.1 GPU | 8082 | 128K | ~47 | Build Pascal; exclusivo (gpu-slot-1) |
+| Ornith 35B GPU | 8092 | — | ~40 | PrismML runtime; exclusivo (gpu-slot-1) |
 
-27B e 4B ficam residentes na GPU. O `switch` vale apenas entre os modelos
-grandes exclusivos (Laguna, Ornith).
+Apenas o Bonsai 4B fica residente na GPU. O Bonsai 27B, Laguna GPU e
+Ornith compoem o grupo exclusivo `gpu-slot-1`: apenas um fica carregado
+por vez. O `switch` aplica-se apenas a modelos desse grupo.
 
 `pcsala models vram` mostra a VRAM usada por modelo e a folga (nvidia-smi).
 `start` e `switch` recusam o arranque se a folga for menor que 1,5 GB.
 
-Switch: `./pcsala models switch <model-id>` (e.g. `bonsai-27b-gpu`).
+Switch: `./pcsala models switch <model-id>` (e.g. `bonsai-27b-gpu` ou
+`laguna-xs-2.1-gpu`).
 
 ## Architecture
 

@@ -22,15 +22,15 @@ CLI pcsala / ia  →  Worker (LangGraph) / ModelCoordinator
 
 | Modelo | Porta | Ctx | Gen tok/s | Estado |
 |---|---|---|---|---|
-| Bonsai 27B GPU + MTP | 8080 | 64K | 28-48 | primario, residente |
+| Bonsai 27B GPU + MTP | 8080 | 64K | 28-48 | primario, exclusivo (gpu-slot-1) |
 | Bonsai 4B GPU | 8093 | 64K | — | residente, nao no boot |
 | Bonsai 9B CPU | 8090 | 32K | 6,08 | ativo |
 | Laguna XS 2.1 CPU | 8091 | — | 2,6 | desativado |
-| Laguna XS 2.1 GPU | 8082 | 128K | ~47 | desativado, exclusivo |
-| Ornith 35B GPU | 8092 | — | ~40 | desativado, exclusivo |
+| Laguna XS 2.1 GPU | 8082 | 128K | ~47 | desativado, exclusivo (gpu-slot-1) |
+| Ornith 35B GPU | 8092 | — | ~40 | desativado, exclusivo (gpu-slot-1) |
 
-GPU exclusiva para modelos grandes — um por vez (Laguna, Ornith). 27B e 4B
-ficam residentes e compartilham a GPU.
+GPU exclusiva para modelos grandes — um por vez (27B, Laguna, Ornith).
+Apenas o Bonsai 4B fica residente na GPU.
 
 ### Bonsai 27B (primario)
 - Modelo: `Ternary-Bonsai-2-27B-PQ2_0.gguf` (6,8 GB) + drafter MTP (1 GB)
@@ -64,7 +64,7 @@ ficam residentes e compartilham a GPU.
 ./pcsala models health <id>
 ./pcsala models start <id>
 ./pcsala models stop <id>
-./pcsala models switch <id>   # apenas modelos exclusivos (Laguna, Ornith)
+./pcsala models switch <id>   # apenas modelos exclusivos (27B, Laguna GPU, Ornith)
 ./pcsala models vram          # VRAM por modelo e folga
 ./pcsala models operation <id>
 ./pcsala health
