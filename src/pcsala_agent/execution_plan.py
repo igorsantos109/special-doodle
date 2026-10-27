@@ -1,7 +1,7 @@
 import dataclasses
 import hashlib
 
-from .execution_contract import ExecutionProfile, resolve_profile
+from .execution_contract import resolve_profile
 
 
 @dataclasses.dataclass(frozen=True)

@@ -1,7 +1,6 @@
 import os
 import stat
 
-
 FLAGS = os.O_NOFOLLOW | os.O_DIRECTORY
 DIR_CREATE_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 

@@ -6,7 +6,7 @@ import pytest
 
 from pcsala_agent.checkpoints import CheckpointStore
 from pcsala_agent.database import connect, initialize
-from pcsala_agent.migrations import migrate, MigrationError
+from pcsala_agent.migrations import MigrationError, migrate
 
 MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
 
@@ -122,12 +122,11 @@ def test_tentativa_nao_pode_cruzar_projetos(tmp_path):
                 (task_id,project_id,title,acceptance_criteria)
                 VALUES ('t2','p2','Teste','Criterio explicito')"""
             )
-        with pytest.raises(sqlite3.IntegrityError):
-            with db:
-                db.execute(
-                    """INSERT INTO attempts
+        with pytest.raises(sqlite3.IntegrityError), db:
+            db.execute(
+                """INSERT INTO attempts
                     (attempt_id,project_id,session_id,task_id)
                     VALUES ('a1','p1','s1','t2')"""
-                )
+            )
     finally:
         db.close()

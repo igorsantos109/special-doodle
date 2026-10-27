@@ -1,9 +1,6 @@
 import dataclasses
-import hashlib
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
-
 
 VALID_PROFILES = ("diagnostic-v1", "diagnostic-v2")
 
@@ -30,7 +27,7 @@ class ExecutionProfile(BaseModel):
     model_config = ConfigDict(frozen=True)
     name: str = "diagnostic-v1"
     argv: tuple = ()
-    storage: Optional[StorageLimits] = None
+    storage: StorageLimits | None = None
     workspace_bytes_max: int = 16777216
     memory_bytes: int = 268435456
     swap_bytes: int = 0
@@ -128,7 +125,7 @@ class ExecutionResult(BaseModel):
     model_config = ConfigDict(frozen=True)
     request: ExecutionRequest
     status: str
-    exit_code: Optional[int] = None
+    exit_code: int | None = None
     output_bytes: int = 0
 
     @field_validator("status")

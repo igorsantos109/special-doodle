@@ -1,5 +1,6 @@
 import json
 import urllib.error
+from io import BytesIO
 
 import pytest
 
@@ -11,7 +12,6 @@ from pcsala_agent.inference_contract import (
     InferenceConfig,
     InferenceRequest,
 )
-from io import BytesIO
 
 
 def make_request(**overrides):

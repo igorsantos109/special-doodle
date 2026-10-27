@@ -1,10 +1,8 @@
-import hashlib
 import json
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .execution_eligibility import (
-    ExecutionNotEligible,
     check_execution_eligibility,
 )
 
@@ -14,7 +12,7 @@ class ExecutionAlreadyAccepted(Exception):
 
 
 def _now():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def accept_execution(db, request):

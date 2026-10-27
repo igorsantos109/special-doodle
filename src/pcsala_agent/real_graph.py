@@ -1,19 +1,15 @@
 import hashlib
 import json
 import os
-import socket
 import sys
-import time
 import urllib.request as urlrequest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .checkpoints import CheckpointStore
-from .context_budget import check_budget, count_tokens, ContextOverflow
+from .context_budget import count_tokens
+from .database import connect
 from .inference_adapter import InferenceAdapter
 from .inference_contract import InferenceConfig, InferenceRequest
-from .database import connect
-from .locking import database_lock, ExecutorBusy
-
 
 GRAPH_ENDPOINT = "http://127.0.0.1:8080"
 
@@ -25,7 +21,7 @@ SLOT_SAVE_RESTORE_ENABLED = os.environ.get("PCSALA_SLOT_SAVE_RESTORE", "0") == "
 
 
 def _now():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _thread_id(scope):

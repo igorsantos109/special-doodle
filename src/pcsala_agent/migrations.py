@@ -1,6 +1,6 @@
-from pathlib import Path
 import shutil
 import sqlite3
+from pathlib import Path
 
 
 class MigrationError(Exception):

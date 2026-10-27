@@ -5,10 +5,16 @@ from pathlib import Path
 import pytest
 
 from pcsala_agent.document_flow import (
-    DocumentError, UnauthorizedPath, ExtractionError,
-    extract_document, extract_text, resolve_path, hash_file,
-    build_analysis_prompt, DocumentExtraction,
-    AUTHORIZED_ROOTS, DEPENDENCIES_SUGGESTED,
+    AUTHORIZED_ROOTS,
+    DEPENDENCIES_SUGGESTED,
+    DocumentExtraction,
+    ExtractionError,
+    UnauthorizedPath,
+    build_analysis_prompt,
+    extract_document,
+    extract_text,
+    hash_file,
+    resolve_path,
 )
 
 
@@ -64,7 +70,6 @@ def test_extract_text_utf8():
 
 
 def test_extract_text_latin1():
-    import os
     data = "Texto Latin-1: Olá Mundo!".encode("latin-1")
     with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as f:
         f.write(data)

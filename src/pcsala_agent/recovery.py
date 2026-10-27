@@ -1,9 +1,8 @@
-import json
 from pathlib import Path
 
 from .checkpoints import CheckpointStore
 from .database import connect
-from .locking import database_lock, ExecutorBusy
+from .locking import database_lock
 
 
 def classify_interrupted(root, project=None, session=None):

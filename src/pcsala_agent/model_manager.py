@@ -242,14 +242,18 @@ class ModelCoordinator:
             session_id TEXT,
             task_id TEXT,
             attempt_id TEXT,
-            action TEXT NOT NULL CHECK (action IN ('start', 'stop', 'switch', 'health', 'reserve', 'release')),
+            action TEXT NOT NULL CHECK (
+                action IN ('start', 'stop', 'switch', 'health',
+                           'reserve', 'release')
+            ),
             target_model_id TEXT NOT NULL,
             previous_status TEXT,
             requested_status TEXT,
             confirmed_status TEXT,
             authorization_used TEXT,
             status TEXT NOT NULL DEFAULT 'REQUESTED' CHECK (
-                status IN ('REQUESTED', 'APPROVED', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'REJECTED', 'BUSY')
+                status IN ('REQUESTED', 'APPROVED', 'IN_PROGRESS',
+                           'COMPLETED', 'FAILED', 'REJECTED', 'BUSY')
             ),
             error TEXT,
             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now')),

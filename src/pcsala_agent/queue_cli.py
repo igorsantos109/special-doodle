@@ -1,10 +1,7 @@
 """CLI da fila de tarefas: enqueue, document, list, status, cancel, reconcile, health."""
 import argparse
-import json
-import os
 import sqlite3
 import sys
-import time
 from pathlib import Path
 
 from .database import connect

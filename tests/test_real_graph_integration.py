@@ -6,7 +6,6 @@ Nao repetem a suite completa - apenas cenarios de integracao nao cobertos.
 
 import json
 import os
-import signal
 import subprocess
 import sys
 import tempfile
@@ -14,10 +13,9 @@ from pathlib import Path
 
 import pytest
 
+from pcsala_agent.checkpoints import CheckpointStore
 from pcsala_agent.database import connect
 from pcsala_agent.real_graph import execute
-from pcsala_agent.checkpoints import CheckpointStore
-
 
 FIXTURE_PROMPT = "O que e um agente de IA?"
 
@@ -215,7 +213,6 @@ class TestChamadaRealEvidencia:
 
         def capture_request(*a, **kw):
             # Captura a requisicao que seria enviada
-            import urllib.request
             body = kw.get("data") or a[0].data if len(a) > 0 else b""
             request_sent["url"] = str(a[0].full_url) if len(a) > 0 else ""
             request_sent["method"] = str(a[0].method) if len(a) > 0 else "POST"
@@ -259,7 +256,6 @@ class TestCLI:
 
     def test_cli_usage_string(self):
         """A descricao do CLI menciona Bonsai CPU e triagem."""
-        import subprocess
         result = subprocess.run(
             [sys.executable, "-m", "pcsala_agent.real_graph", "--help"],
             capture_output=True, text=True, timeout=10,

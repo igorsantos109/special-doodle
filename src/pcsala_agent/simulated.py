@@ -1,8 +1,7 @@
 import argparse
 import json
-import secrets
-import sqlite3
 import sys
+from datetime import UTC
 from pathlib import Path
 
 from .checkpoints import CheckpointStore, RecoveryRequired
@@ -12,8 +11,8 @@ from .migrations import migrate
 
 
 def _now():
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    from datetime import datetime
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _open_db(root):

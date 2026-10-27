@@ -1,5 +1,5 @@
-import sys
 import subprocess
+import sys
 
 from .output_collector import collect_output, validate_output_limits
 

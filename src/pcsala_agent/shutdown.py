@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from .database import connect
-from .locking import database_lock, ExecutorBusy
+from .locking import database_lock
 from .sessions import SessionConflict, SessionController
 
 

@@ -1,5 +1,5 @@
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 VALID_SESSION_STATES = (
     "STOPPED", "STARTING", "READY", "RUNNING",
@@ -24,7 +24,7 @@ class SessionConflict(Exception):
 
 
 def _now():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 class SessionController:

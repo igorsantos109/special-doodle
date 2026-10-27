@@ -1,16 +1,16 @@
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
 from pcsala_agent.checkpoints import CheckpointStore
 from pcsala_agent.controlled import run_unit
 from pcsala_agent.database import connect
-from pcsala_agent.locking import database_lock, ExecutorBusy
+from pcsala_agent.locking import ExecutorBusy, database_lock
 from pcsala_agent.migrations import migrate
 from pcsala_agent.recovery import classify_interrupted
-from pcsala_agent.sessions import SessionController, SessionConflict
+from pcsala_agent.sessions import SessionConflict, SessionController
+
 
 @pytest.fixture
 def environment(tmp_path):
@@ -86,9 +86,8 @@ run_unit(sys.argv[1], "p", "s", "t", driver=crash_after_graph)
     assert repeated["unresolved_records"] == 1
 
 def test_recuperacao_recusa_executor_com_bloqueio(environment):
-    with database_lock(environment / "executor-owner"):
-        with pytest.raises(ExecutorBusy):
-            classify_interrupted(environment, "p", "s")
+    with database_lock(environment / "executor-owner"), pytest.raises(ExecutorBusy):
+        classify_interrupted(environment, "p", "s")
 
 def test_classificacao_sem_pendencias_preserva_estado(environment):
     result = classify_interrupted(environment, "p", "s")

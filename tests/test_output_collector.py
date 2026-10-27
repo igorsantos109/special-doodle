@@ -5,7 +5,9 @@ import time
 import pytest
 
 from pcsala_agent.output_collector import (
-    OutputCollectionError, collect_output, validate_output_limits,
+    OutputCollectionError,
+    collect_output,
+    validate_output_limits,
 )
 
 

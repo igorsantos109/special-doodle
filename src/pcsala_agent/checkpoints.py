@@ -1,8 +1,6 @@
 import hashlib
 import os
-import sqlite3
-from datetime import datetime, timezone
-
+from datetime import UTC, datetime
 
 CHECKPOINT_STATES = ("PREPARING", "COMMITTED", "NEEDS_RECOVERY")
 OPERATION_STATES = (
@@ -15,7 +13,7 @@ class RecoveryRequired(Exception):
 
 
 def _now():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 class CheckpointStore:

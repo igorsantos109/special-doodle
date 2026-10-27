@@ -5,11 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from pcsala_agent.checkpoints import CheckpointStore
 from pcsala_agent.database import connect
 from pcsala_agent.real_graph import execute
-from pcsala_agent.checkpoints import CheckpointStore
-from pcsala_agent.locking import database_lock
-
 
 FIXTURE_SCOPE = ("p", "s", "t", "a")
 FIXTURE_PROMPT = "Resuma em portugues: o que e um modelo de linguagem?"

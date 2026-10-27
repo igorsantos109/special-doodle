@@ -45,7 +45,7 @@ class TokenizerError(Exception):
 
 
 class BudgetCheck:
-    __slots__ = ("over_budget", "deficit", "ratio", "tokens")
+    __slots__ = ("deficit", "over_budget", "ratio", "tokens")
 
     def __init__(self, over_budget, deficit, ratio, tokens):
         self.over_budget = over_budget

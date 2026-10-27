@@ -1,6 +1,6 @@
 import os
-import time
 import selectors
+import time
 from dataclasses import dataclass
 
 
