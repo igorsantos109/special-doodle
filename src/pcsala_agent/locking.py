@@ -1,13 +1,15 @@
-from pathlib import Path
-import os
 import fcntl
+import os
+from pathlib import Path
 
 
 class ExecutorBusy(Exception):
     pass
 
 
-class _FileLock:
+class FileLock:
+    """Lock de arquivo baseado em fcntl.flock (bloqueio nao-bloqueante)."""
+
     def __init__(self, path):
         self.path = Path(str(path) + ".lock")
         self.fd = None
@@ -36,8 +38,17 @@ class _FileLock:
         return False
 
 
+def switch_lock(lock_dir):
+    """Retorna um FileLock para o diretório de troca de GPU.
+
+    Levanta OSError se não conseguir criar o diretório de lock.
+    """
+    Path(lock_dir).mkdir(parents=True, exist_ok=True)
+    return FileLock(Path(lock_dir) / "pcsala-gpu-switch.lock")
+
+
 def database_lock(database):
     path = Path(database)
     if path.is_symlink():
         raise OSError("symlink in database path")
-    return _FileLock(path)
+    return FileLock(path)

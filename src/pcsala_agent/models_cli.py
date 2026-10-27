@@ -1,24 +1,31 @@
 """CLI de gestao de modelos: list, status, health, start, stop, switch, vram."""
 import argparse
-import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from .database import connect
 from .gpu_monitor import GpuMonitor
-from .locking import _FileLock, ExecutorBusy
-from .model_manager import ModelCoordinator, ModelRegistry, GPU_SWITCH_LOCK_DIR, _unit_active
-from .model_vram import ModelVramStore
+from .locking import ExecutorBusy, switch_lock
 from .migrations import migrate
+from .model_manager import (
+    GPU_SWITCH_LOCK_DIR,
+    ModelCoordinator,
+    ModelRegistry,
+    _unit_active,
+)
+from .model_vram import ModelVramStore
 
 VRAM_GUARD_MIN_FREE_MB = 1536  # 1,5 GB
+VRAM_RELEASE_WAIT_SECONDS = 30
+VRAM_RELEASE_POLL_SECONDS = 1
 
 
 class ModelsCLI:
     def __init__(self, registry=None, coordinator=None, vram_store=None,
                  gpu_monitor=None, systemctl=None, lock_dir=None,
-                 db_path=None):
+                 db_path=None, skip_vram_guard=False):
         self.registry = registry or ModelRegistry()
         if db_path is not None:
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -33,7 +40,9 @@ class ModelsCLI:
             self.vram_store = None
         self.gpu_monitor = gpu_monitor or GpuMonitor()
         self.systemctl = systemctl or self._run_systemctl
-        self.lock_dir = Path(lock_dir) if lock_dir else GPU_SWITCH_LOCK_DIR
+        self.lock_dir = Path(lock_dir) if lock_dir else Path(
+            os.environ.get("PCSALA_LOCK_DIR", GPU_SWITCH_LOCK_DIR))
+        self.skip_vram_guard = skip_vram_guard
 
     # ------------------------------------------------------------------ run
 
@@ -105,12 +114,12 @@ class ModelsCLI:
         if model is None:
             print(f"Modelo desconhecido: {model_id}", file=sys.stderr)
             return 1
-        if not self._vram_ok():
+        if not self.skip_vram_guard and not self._vram_ok():
             print("Recusando arranque: VRAM livre abaixo de 1,5 GB",
                   file=sys.stderr)
             return 3
         try:
-            with self._switch_lock():
+            with switch_lock(self.lock_dir):
                 self.coordinator.reserve_engine(model_id, requester="cli")
                 op = self.coordinator.request_start(model_id)
                 code = self.systemctl("start", model.unit)
@@ -133,7 +142,7 @@ class ModelsCLI:
             print(f"Modelo desconhecido: {model_id}", file=sys.stderr)
             return 1
         try:
-            with self._switch_lock():
+            with switch_lock(self.lock_dir):
                 code = self.systemctl("stop", model.unit)
                 self.coordinator.release_engine(model_id)
         except ExecutorBusy:
@@ -158,27 +167,23 @@ class ModelsCLI:
                   "o switch aplica-se apenas a modelos exclusivos (Laguna, Ornith)",
                   file=sys.stderr)
             return 3
-        if not self._vram_ok():
-            print("Recusando troca: VRAM livre abaixo de 1,5 GB", file=sys.stderr)
-            return 3
         from_model_id = None
         for m in self.registry.exclusive_models():
             if m.model_id == target_model_id:
                 continue
-            try:
-                st = self.coordinator.ensure_ready(m.model_id)
-            except Exception:
-                continue
-            if st.service == "running":
+            if self._is_model_running(m.model_id):
                 from_model_id = m.model_id
                 break
         if from_model_id == target_model_id:
             print(f"{target_model_id} ja e o modelo ativo no slot exclusivo")
             return 0
         from_model = self.registry.get(from_model_id) if from_model_id else None
+
         try:
-            with self._switch_lock():
+            with switch_lock(self.lock_dir):
                 self.coordinator.reserve_engine(target_model_id, requester="cli")
+                # Para o modelo ativo ANTES de checar a VRAM, aguardando
+                # liberacao ate 30 s.
                 if from_model is not None and _unit_active(from_model.unit):
                     code = self.systemctl("stop", from_model.unit)
                     if code != 0:
@@ -186,6 +191,15 @@ class ModelsCLI:
                               file=sys.stderr)
                         self.coordinator.release_engine(target_model_id)
                         return code
+                    self._await_vram_release()
+                # Guarda de VRAM apos liberacao (falha fechada).
+                if not self.skip_vram_guard and not self._vram_ok():
+                    print("Recusando troca: VRAM livre abaixo de 1,5 GB "
+                          "apos liberacao", file=sys.stderr)
+                    self.coordinator.release_engine(target_model_id)
+                    if from_model is not None:
+                        self.coordinator.release_engine(from_model_id)
+                    return 3
                 code = self.systemctl("start", to_model.unit)
                 if from_model is not None:
                     self.coordinator.release_engine(from_model_id)
@@ -201,26 +215,45 @@ class ModelsCLI:
         print(f"Troca concluida: {origem} -> {target_model_id}")
         return 0
 
+    def _await_vram_release(self):
+        """Aguarda ate VRAM_RELEASE_WAIT_SECONDS pela liberacao da GPU."""
+        deadline = time.monotonic() + VRAM_RELEASE_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            free = self.gpu_monitor.free_mb()
+            if free is not None and free >= VRAM_GUARD_MIN_FREE_MB:
+                return
+            time.sleep(VRAM_RELEASE_POLL_SECONDS)
+
+    def _is_model_running(self, model_id):
+        """Retorna True se o modelo esta rodando; False se nao puder verificar."""
+        try:
+            st = self.coordinator.ensure_ready(model_id)
+        except OSError:
+            return False
+        return st.service == "running"
+
     # ---------------------------------------------------------------- vram
 
     def _cmd_vram(self):
         gpus = self.gpu_monitor.query_vram()
-        free_total = self.gpu_monitor.free_mb()
+        gpu_index = self.gpu_monitor.gpu_index
+        free_target = self.gpu_monitor.free_mb()
         print("VRAM por GPU (nvidia-smi):")
         if gpus:
             for g in gpus:
+                marker = " (alvo)" if g.index == gpu_index else ""
                 print(f"  GPU {g.index} {g.name}: "
                       f"usada {g.used_mb} MB / total {g.total_mb} MB / "
-                      f"livre {g.free_mb} MB")
+                      f"livre {g.free_mb} MB{marker}")
         else:
             print("  nvidia-smi indisponivel; nao foi possivel medir VRAM")
         print()
-        if free_total is not None:
-            print(f"VRAM livre total: {free_total} MB")
-            if free_total < VRAM_GUARD_MIN_FREE_MB:
+        if free_target is not None:
+            print(f"VRAM livre GPU {gpu_index}: {free_target} MB")
+            if free_target < VRAM_GUARD_MIN_FREE_MB:
                 print("AVISO: folga abaixo de 1,5 GB; start/switch serao recusados")
         else:
-            print("VRAM livre total: indisponivel")
+            print(f"VRAM livre GPU {gpu_index}: indisponivel")
         print()
         print("Ultima medida registrada por modelo (SQLite):")
         if self.vram_store is None:
@@ -253,15 +286,9 @@ class ModelsCLI:
     def _vram_ok(self):
         free = self.gpu_monitor.free_mb()
         if free is None:
-            return True
+            # nvidia-smi indisponível: falha fechada
+            return False
         return free >= VRAM_GUARD_MIN_FREE_MB
-
-    def _switch_lock(self):
-        try:
-            self.lock_dir.mkdir(parents=True, exist_ok=True)
-            return _FileLock(self.lock_dir / "pcsala-gpu-switch.lock")
-        except OSError:
-            return _NullLock()
 
     @staticmethod
     def _port(endpoint):
@@ -269,24 +296,15 @@ class ModelsCLI:
 
     @staticmethod
     def _run_systemctl(action, unit):
+        import subprocess
         try:
-            result = subprocess_run(["systemctl", action, unit])
+            result = subprocess.run(
+                ["systemctl", action, unit],
+                check=False, capture_output=True, text=True, timeout=30,
+            )
             return result.returncode
         except OSError:
             return 127
-
-
-class _NullLock:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-
-def subprocess_run(cmd):
-    import subprocess
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
 
 def main(argv=None):
@@ -295,28 +313,28 @@ def main(argv=None):
     parser.add_argument("--root", default="/var/lib/pcsala-worker")
     parser.add_argument("--db", default=None,
                         help="Caminho do SQLite (default: <root>/state.sqlite)")
+    parser.add_argument("--sem-guarda-vram", action="store_true",
+                        help="Ignora a guarda de VRAM (uso por conta própria)")
     parser.add_argument("command", choices=[
         "list", "status", "health", "start", "stop", "switch", "vram",
         "operation",
     ])
     parser.add_argument("model_id", nargs="?")
-    parser.add_argument("to_model_id", nargs="?")
     args = parser.parse_args(argv)
 
-    if args.command in ("status", "health", "start", "stop", "operation") \
+    if args.command in ("status", "health", "start", "stop", "switch", "operation") \
             and not args.model_id:
         parser.error(f"{args.command} requer um modelo")
 
     db_path = args.db
     if db_path is None:
         db_path = str(Path(args.root) / "state.sqlite")
-    cli = ModelsCLI(db_path=db_path)
-    command = args.command
-    if command == "switch":
-        return cli.run([command, args.model_id])
-    if command in ("status", "health", "start", "stop", "operation"):
-        return cli.run([command, args.model_id])
-    return cli.run([command])
+    cli = ModelsCLI(
+        db_path=db_path,
+        skip_vram_guard=args.sem_guarda_vram,
+    )
+    return cli.run([args.command, args.model_id] if args.model_id
+                   else [args.command])
 
 
 if __name__ == "__main__":

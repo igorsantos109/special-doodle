@@ -2,8 +2,9 @@
 
 A consulta e injetavel para permitir testes sem hardware/GPU presente.
 """
-from dataclasses import dataclass
+import os
 import subprocess
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -15,18 +16,43 @@ class GpuMemory:
     free_mb: int
 
 
+def _default_gpu_index():
+    try:
+        return int(os.environ.get("PCSALA_GPU_INDEX", "0"))
+    except ValueError:
+        return 0
+
+
 class GpuMonitor:
-    def __init__(self, query_vram=None):
+    def __init__(self, query_vram=None, gpu_index=None):
         self._query_vram = query_vram or self._run_nvidia_smi
+        self.gpu_index = gpu_index if gpu_index is not None else _default_gpu_index()
 
     def query_vram(self):
         return self._query_vram()
 
-    def free_mb(self):
+    def free_mb(self, gpu_index=None):
+        """VRAM livre (MB) de uma GPU específica.
+
+        Quando nvidia-smi está indisponível, retorna None (falha fechada).
+        """
+        index = self.gpu_index if gpu_index is None else gpu_index
         gpus = self.query_vram()
         if not gpus:
             return None
-        return sum(gpu.free_mb for gpu in gpus)
+        for g in gpus:
+            if g.index == index:
+                return g.free_mb
+        return None
+
+    def gpu_count(self):
+        gpus = self.query_vram()
+        if not gpus:
+            return None
+        return len(gpus)
+
+    def all_gpus(self):
+        return self.query_vram()
 
     @staticmethod
     def _run_nvidia_smi():
