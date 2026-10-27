@@ -24,13 +24,13 @@ class QueueCLI:
     def run(self, args):
         command = args[0] if args else None
         if command == "enqueue":
-            return self._cmd_enqueue(args)
+            return self._cmd_enqueue(args[1:])
         if command == "document":
-            return self._cmd_document(args)
+            return self._cmd_document(args[1:])
         if command == "document-deps":
             return self._cmd_document_deps()
         if command == "list":
-            return self._cmd_list(args)
+            return self._cmd_list(args[1:])
         if command == "status":
             return self._cmd_status(args[1])
         if command == "cancel":

@@ -55,8 +55,8 @@ class LlamaSwapClient:
 
         Retorna (ok, error). Falhas de rede não são críticas para o rollback.
         """
-        url = f"{self.base_url}/v1/models/{model_id}/unload"
-        req = urllib.request.Request(url, method="DELETE")
+        url = f"{self.base_url}/api/models/unload/{model_id}"
+        req = urllib.request.Request(url, method="POST")
         try:
             with self._urlopen(req, timeout=self.timeout_seconds) as resp:
                 resp.read()

@@ -16,8 +16,6 @@ class _FakeHandler(http.server.BaseHTTPRequestHandler):
         self.calls.append(("GET", self.path))
         if self.path == "/v1/models":
             self._send(200, {"data": []})
-        elif self.path == "/v1/models/bonsai-4b-gpu/unload":
-            self._send(200, {"status": "unloaded"})
         else:
             self._send(404, {"error": "not found"})
 
@@ -26,6 +24,8 @@ class _FakeHandler(http.server.BaseHTTPRequestHandler):
         if self.path == "/v1/chat/completions":
             resp = self.responses.get("/v1/chat/completions", {"status": 200})
             self._send(resp["status"], resp.get("body", {}))
+        elif self.path == "/api/models/unload/bonsai-4b-gpu":
+            self._send(200, {"status": "unloaded"})
         else:
             self._send(404, {"error": "not found"})
 
