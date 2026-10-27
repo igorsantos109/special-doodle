@@ -82,8 +82,18 @@ class ModelOperationResult(BaseModel):
     completed_at: str | None = None
 
 
-_MODELS_CONFIG_PATH = Path("/home/igor/.config/pcsala-bonsai/models.json")
-_API_KEY_PATH = Path("/home/igor/.config/pcsala-bonsai/api.key")
+_MODELS_CONFIG_PATH = Path(
+    os.environ.get(
+        "PCSALA_MODELS_CONFIG",
+        "/home/igor/.config/pcsala-bonsai/models.json",
+    )
+)
+_API_KEY_PATH = Path(
+    os.environ.get(
+        "PCSALA_API_KEY_FILE",
+        "/home/igor/.config/pcsala-bonsai/api.key",
+    )
+)
 _UNIT_WHITELIST = {"bonsai2-27b.service", "bonsai2-cpu.service", "laguna.service",
                     "laguna-gpu.service", "ornith.service"}
 _GPU_UNIT = "bonsai2-27b.service"
