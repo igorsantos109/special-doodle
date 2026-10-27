@@ -1,18 +1,22 @@
 import dataclasses
 import secrets
 import socket
-import urllib.error
+import subprocess
 from pathlib import Path
 
 from .database import connect
 
 KNOWN_MODELS = (
     "bonsai-27b-gpu",
+    "bonsai-4b-gpu",
     "bonsai-9b-cpu",
     "laguna-xs-2.1-cpu",
     "laguna-xs-2.1-gpu",
     "ornith-35b-gpu",
 )
+
+GPU_SWITCH_LOCK_DIR = Path("/run/pcsala")
+GPU_SWITCH_LOCK = GPU_SWITCH_LOCK_DIR / "pcsala-gpu-switch.lock"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -33,9 +37,16 @@ class ModelRegistry:
             "bonsai-27b-gpu": ModelSpec(
                 model_id="bonsai-27b-gpu", model_class="GPU",
                 profile="gpu-triage-v1", unit="bonsai2-27b.service",
-                shared=False, exclusive_group="gpu-slot-1",
+                shared=True, exclusive_group=None,
                 endpoint="http://127.0.0.1:8080",
                 capabilities=("triagem", "raciocinio"),
+            ),
+            "bonsai-4b-gpu": ModelSpec(
+                model_id="bonsai-4b-gpu", model_class="GPU",
+                profile="gpu-triage-v1", unit="bonsai-4b-gpu.service",
+                shared=True, exclusive_group=None,
+                endpoint="http://127.0.0.1:8093",
+                capabilities=("triagem", "resumo"),
             ),
             "bonsai-9b-cpu": ModelSpec(
                 model_id="bonsai-9b-cpu", model_class="CPU",
@@ -72,6 +83,10 @@ class ModelRegistry:
 
     def list(self):
         return list(self._models.values())
+
+    def exclusive_models(self):
+        return [m for m in self._models.values()
+                if m.exclusive_group is not None]
 
 
 def _check_model_server(host="127.0.0.1", port=8090):
@@ -115,26 +130,7 @@ class ModelCoordinator:
         db = self._db()
         operation_id = secrets.token_hex(8)
         if db is not None:
-            db.execute(
-                """CREATE TABLE IF NOT EXISTS model_operations (
-                operation_id TEXT PRIMARY KEY,
-                idempotency_key TEXT,
-                requester TEXT NOT NULL DEFAULT 'system',
-                session_id TEXT,
-                task_id TEXT,
-                attempt_id TEXT,
-                action TEXT NOT NULL,
-                target_model_id TEXT NOT NULL,
-                previous_status TEXT,
-                requested_status TEXT,
-                confirmed_status TEXT,
-                authorization_used TEXT,
-                status TEXT NOT NULL DEFAULT 'REQUESTED',
-                error TEXT,
-                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now')),
-                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now'))
-            )"""
-            )
+            self._ensure_model_operations_table(db)
             db.execute(
                 """INSERT INTO model_operations
                 (operation_id, action, target_model_id, requested_status, status)
@@ -143,6 +139,176 @@ class ModelCoordinator:
             )
             db.commit()
         return ModelOperation(operation_id=operation_id)
+
+    def request_stop(self, model_id):
+        model = self.registry.get(model_id)
+        if model is None:
+            raise ValueError(f"Modelo desconhecido: {model_id}")
+        db = self._db()
+        operation_id = secrets.token_hex(8)
+        if db is not None:
+            self._ensure_model_operations_table(db)
+            db.execute(
+                """INSERT INTO model_operations
+                (operation_id, action, target_model_id, requested_status, status)
+                VALUES (?, 'stop', ?, 'STOPPED', 'REQUESTED')""",
+                (operation_id, model_id),
+            )
+            db.commit()
+        return ModelOperation(operation_id=operation_id)
+
+    def request_switch(self, from_model_id, to_model_id):
+        from_model = self.registry.get(from_model_id)
+        to_model = self.registry.get(to_model_id)
+        if from_model is None:
+            raise ValueError(f"Modelo desconhecido: {from_model_id}")
+        if to_model is None:
+            raise ValueError(f"Modelo desconhecido: {to_model_id}")
+        if to_model.exclusive_group is None:
+            raise ValueError(
+                f"Modelo {to_model_id} e residente/compartilhado; "
+                "o switch aplica-se apenas a modelos exclusivos"
+            )
+        db = self._db()
+        operation_id = secrets.token_hex(8)
+        if db is not None:
+            self._ensure_model_operations_table(db)
+            db.execute(
+                """INSERT INTO model_operations
+                (operation_id, action, target_model_id, previous_status,
+                 requested_status, status)
+                VALUES (?, 'switch', ?, 'RUNNING', 'READY', 'REQUESTED')""",
+                (operation_id, to_model_id),
+            )
+            db.commit()
+        return ModelOperation(operation_id=operation_id)
+
+    def _ensure_model_operations_table(self, db):
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS model_operations (
+            operation_id TEXT PRIMARY KEY,
+            idempotency_key TEXT,
+            requester TEXT NOT NULL DEFAULT 'system',
+            session_id TEXT,
+            task_id TEXT,
+            attempt_id TEXT,
+            action TEXT NOT NULL CHECK (action IN ('start', 'stop', 'switch', 'health', 'reserve', 'release')),
+            target_model_id TEXT NOT NULL,
+            previous_status TEXT,
+            requested_status TEXT,
+            confirmed_status TEXT,
+            authorization_used TEXT,
+            status TEXT NOT NULL DEFAULT 'REQUESTED' CHECK (
+                status IN ('REQUESTED', 'APPROVED', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'REJECTED', 'BUSY')
+            ),
+            error TEXT,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now')),
+            updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now'))
+        )"""
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS model_operations_target "
+            "ON model_operations(target_model_id, status)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS model_operations_requester "
+            "ON model_operations(requester)"
+        )
+
+    def reserve_engine(self, model_id, requester="system"):
+        model = self.registry.get(model_id)
+        if model is None:
+            raise ValueError(f"Modelo desconhecido: {model_id}")
+        if model.exclusive_group is None:
+            return None
+        db = self._db()
+        if db is None:
+            return None
+        reservation_id = secrets.token_hex(8)
+        cuda_visible = _cuda_visible_for_model(model)
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS model_reservations (
+            reservation_id TEXT PRIMARY KEY,
+            model_id TEXT NOT NULL,
+            requester TEXT NOT NULL DEFAULT 'system',
+            exclusive_group TEXT,
+            reserved_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now')),
+            released_at TEXT,
+            cuda_visible_devices TEXT,
+            status TEXT NOT NULL DEFAULT 'active' CHECK (
+                status IN ('active', 'released')
+            )
+        )"""
+        )
+        db.execute(
+            """CREATE INDEX IF NOT EXISTS model_reservations_model
+            ON model_reservations(model_id, status)"""
+        )
+        db.execute(
+            """INSERT INTO model_reservations
+            (reservation_id, model_id, requester, exclusive_group,
+             cuda_visible_devices, status)
+            VALUES (?, ?, ?, ?, ?, 'active')""",
+            (reservation_id, model_id, requester, model.exclusive_group,
+             cuda_visible),
+        )
+        db.commit()
+        return reservation_id
+
+    def release_engine(self, model_id):
+        model = self.registry.get(model_id)
+        if model is None:
+            raise ValueError(f"Modelo desconhecido: {model_id}")
+        db = self._db()
+        if db is None:
+            return
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS model_reservations (
+            reservation_id TEXT PRIMARY KEY,
+            model_id TEXT NOT NULL,
+            requester TEXT NOT NULL DEFAULT 'system',
+            exclusive_group TEXT,
+            reserved_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now')),
+            released_at TEXT,
+            cuda_visible_devices TEXT,
+            status TEXT NOT NULL DEFAULT 'active' CHECK (
+                status IN ('active', 'released')
+            )
+        )"""
+        )
+        db.execute(
+            """UPDATE model_reservations
+            SET released_at=strftime('%Y-%m-%dT%H:%M:%S','now'),
+                status='released'
+            WHERE model_id=? AND status='active'""",
+            (model_id,),
+        )
+        db.commit()
+
+    def engine_reserved(self, model_id):
+        db = self._db()
+        if db is None:
+            return False
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS model_reservations (
+            reservation_id TEXT PRIMARY KEY,
+            model_id TEXT NOT NULL,
+            requester TEXT NOT NULL DEFAULT 'system',
+            exclusive_group TEXT,
+            reserved_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now')),
+            released_at TEXT,
+            cuda_visible_devices TEXT,
+            status TEXT NOT NULL DEFAULT 'active' CHECK (
+                status IN ('active', 'released')
+            )
+        )"""
+        )
+        row = db.execute(
+            """SELECT 1 FROM model_reservations
+            WHERE model_id=? AND status='active' LIMIT 1""",
+            (model_id,),
+        ).fetchone()
+        return row is not None
 
     def get_operation(self, operation_id, database=None):
         db = database
@@ -168,7 +334,7 @@ class ModelCoordinator:
 
 
 def _unit_active(unit):
-    import subprocess
+    import subprocess  # noqa: F401
     try:
         result = subprocess.run(
             ["systemctl", "is-active", unit],
@@ -177,6 +343,17 @@ def _unit_active(unit):
         return result.stdout.strip() == "active"
     except Exception:
         return False
+
+
+def _cuda_visible_for_model(model):
+    """Return the CUDA_VISIBLE_DEVICES value for a model.
+
+    Resident/shared GPU models (27B + 4B) coexist on the GPU and share
+    device 0. Exclusive big models (Laguna, Ornith) take the GPU alone.
+    """
+    if model.exclusive_group is None:
+        return "0"
+    return "0"
 
 
 class ModelStatus:

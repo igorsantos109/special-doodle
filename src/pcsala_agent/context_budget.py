@@ -105,13 +105,13 @@ def _clean_compression_output(raw):
         return ""
     lines = raw.strip().splitlines()
     kept = []
-    fact_set = tuple(k.lower() for k in FACT_KEYS)
+    fact_set = tuple(k.upper() for k in FACT_KEYS)
     for line in lines:
         stripped = line.strip()
         if not stripped:
             continue
         lowered = stripped.split(":", 1)[0].strip().upper()
-        if any(stripped.upper().startswith(k) for k in fact_set):
+        if any(lowered.startswith(k) for k in fact_set):
             kept.append(stripped)
         else:
             continue

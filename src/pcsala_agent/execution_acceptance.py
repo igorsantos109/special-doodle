@@ -22,30 +22,33 @@ def accept_execution(db, request):
     request_json = request.model_dump_json()
     revision = observation.session_revision
     execution_id = secrets.token_hex(8)
-    try:
-        with db:
-            db.execute(
-                """INSERT INTO execution_acceptances
-                (execution_id, attempt_id, request_json, session_revision)
-                VALUES (?, ?, ?, ?)""",
-                (execution_id, request.attempt_id, request_json, revision),
-            )
-            db.execute(
-                """INSERT INTO audit_events
-                (event_id, session_id, event_type, details_json)
-                VALUES (?, ?, 'EXECUTION_ACCEPTED', ?)""",
-                (
-                    secrets.token_hex(8),
-                    request.session_id,
-                    json.dumps({
-                        "execution_id": execution_id,
-                        "attempt_id": request.attempt_id,
-                        "session_revision": revision,
-                    }),
-                ),
-            )
-    except db.IntegrityError:
+    existente = db.execute(
+        "SELECT 1 FROM execution_acceptances WHERE attempt_id=?",
+        (request.attempt_id,),
+    ).fetchone()
+    if existente is not None:
         raise ExecutionAlreadyAccepted("execucao ja aceita")
+    with db:
+        db.execute(
+            """INSERT INTO execution_acceptances
+            (execution_id, attempt_id, request_json, session_revision)
+            VALUES (?, ?, ?, ?)""",
+            (execution_id, request.attempt_id, request_json, revision),
+        )
+        db.execute(
+            """INSERT INTO audit_events
+            (event_id, session_id, event_type, details_json)
+            VALUES (?, ?, 'EXECUTION_ACCEPTED', ?)""",
+            (
+                secrets.token_hex(8),
+                request.session_id,
+                json.dumps({
+                    "execution_id": execution_id,
+                    "attempt_id": request.attempt_id,
+                    "session_revision": revision,
+                }),
+            ),
+        )
     return AcceptedExecution(
         execution_id=execution_id,
         attempt_id=request.attempt_id,

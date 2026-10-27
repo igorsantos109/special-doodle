@@ -13,6 +13,8 @@ class ExecutionObservation(BaseModel):
 
 
 def check_execution_eligibility(db, request):
+    if db.in_transaction:
+        raise ExecutionNotEligible("transacao externa em andamento")
     row = db.execute(
         """SELECT project_id, session_id, task_id, attempt_id, revision
         FROM attempts

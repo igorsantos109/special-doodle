@@ -17,6 +17,12 @@ from .locking import database_lock, ExecutorBusy
 
 GRAPH_ENDPOINT = "http://127.0.0.1:8080"
 
+# Slot save/restore (KV de documentos longos) esta DESATIVADO por default.
+# So deve ser ativado (PCSALA_SLOT_SAVE_RESTORE=1) apos validar num slot
+# descartavel se o MROPE aceita o restauro. Caso nao aceite, registrar no
+# guia e manter desativado (ver GUIA_MESTRE).
+SLOT_SAVE_RESTORE_ENABLED = os.environ.get("PCSALA_SLOT_SAVE_RESTORE", "0") == "1"
+
 
 def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -28,6 +34,27 @@ def _thread_id(scope):
 
 def _scope(project, session, task, attempt):
     return (project, session, task, attempt)
+
+
+def _slot_action(endpoint, slot_id, action, _urlopen=None):
+    """POST /slots/<id>?action=save|restore (KV de documentos longos).
+
+    Somente efetivo quando SLOT_SAVE_RESTORE_ENABLED. Retorna None quando
+    desativado ou quando o servidor nao esta disponivel.
+    """
+    if not SLOT_SAVE_RESTORE_ENABLED:
+        return None
+    if _urlopen is None:
+        _urlopen = urlrequest.urlopen
+    import urllib.error
+    url = f"{endpoint.rstrip('/')}/slots/{slot_id}?action={action}"
+    try:
+        req = _urlopen(url)
+        req.read()
+        return True
+    except (urllib.error.URLError, OSError):
+        return False
+
 
 
 def _has_indeterminate(db, project, session, task, attempt):
@@ -62,7 +89,8 @@ def _find_completed_inference(db, store, project, session, task):
     return None
 
 def execute(env, command, project, session, task, attempt, prompt,
-            _urlopen=None, profile="gpu-triage-v1", _skip_health_check=False):
+            _urlopen=None, profile="gpu-triage-v1", _skip_health_check=False,
+            _document_slot=None):
     if _urlopen is None:
         _urlopen = urlrequest.urlopen
     db_path = env / "state.sqlite"
@@ -135,6 +163,10 @@ def execute(env, command, project, session, task, attempt, prompt,
         )
         _record_operation(db, project, session, task, "INFERENCE", prompt, "STARTED", None)
 
+        if _document_slot:
+            _slot_action(GRAPH_ENDPOINT, _document_slot, "save",
+                         _urlopen=_urlopen)
+
         try:
             count_tokens(prompt, _urlopen=_urlopen)
         except Exception:
@@ -142,6 +174,9 @@ def execute(env, command, project, session, task, attempt, prompt,
         resp = adapter.query(req, _urlopen=_urlopen)
 
         if resp.status != "SUCCESS":
+            if _document_slot:
+                _slot_action(GRAPH_ENDPOINT, _document_slot, "restore",
+                             _urlopen=_urlopen)
             _record_operation(db, project, session, task, "INFERENCE", prompt,
                               "FAILED", None)
             db.execute(
@@ -187,6 +222,9 @@ def execute(env, command, project, session, task, attempt, prompt,
             "UPDATE attempts SET status='SUCCEEDED', completed_at=? WHERE attempt_id=?",
             (_now(), attempt),
         )
+        if _document_slot:
+            _slot_action(GRAPH_ENDPOINT, _document_slot, "restore",
+                         _urlopen=_urlopen)
         db.commit()
         return {
             "status": "CONCLUIDO",

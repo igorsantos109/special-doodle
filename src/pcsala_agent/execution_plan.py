@@ -27,16 +27,14 @@ class ExecutionPlan:
         return self
 
 
-_RESOURCE_PROPERTIES = tuple(
-    f"--property={p}"
-    for p in [
-        "User=pcsala-executor", "Group=pcsala-executor",
-        "MemoryMax=268435456", "MemorySwapMax=0",
-        "TasksMax=32", "CPUQuota=50%", "RuntimeMaxSec=15s",
-        "TimeoutStopSec=2s", "KillMode=control-group",
-        "OOMPolicy=kill", "NoNewPrivileges=yes", "WorkingDirectory=/",
-    ]
+_RESOURCE_PROPS = (
+    "User=pcsala-executor", "Group=pcsala-executor",
+    "MemoryMax=268435456", "MemorySwapMax=0",
+    "TasksMax=32", "CPUQuota=50%", "RuntimeMaxSec=15s",
+    "TimeoutStopSec=2s", "KillMode=control-group",
+    "OOMPolicy=kill", "NoNewPrivileges=yes", "WorkingDirectory=/",
 )
+_RESOURCE_PROPERTIES = tuple(f"--property={p}" for p in _RESOURCE_PROPS)
 
 _NAMESPACE_OPTIONS = (
     "--unshare-user", "--unshare-net", "--unshare-pid",
@@ -107,7 +105,7 @@ def build_execution_plan(request):
             storage_mounts=(),
             mount_namespace="default",
             payload_user="pcsala-executor",
-            resource_properties=_RESOURCE_PROPERTIES,
+            resource_properties=_RESOURCE_PROPS,
             privileged_preparation_required=False,
             executable=True,
             output_bytes_max=65536,
@@ -146,7 +144,7 @@ def build_execution_plan(request):
         storage_mounts=(workspace_mount, tmp_mount),
         mount_namespace="private",
         payload_user="pcsala-executor",
-        resource_properties=_RESOURCE_PROPERTIES,
+        resource_properties=_RESOURCE_PROPS,
         privileged_preparation_required=True,
         executable=True,
         output_bytes_max=65536,

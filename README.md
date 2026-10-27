@@ -22,19 +22,25 @@ pcsala cancel <id>
 pcsala reconcile
 pcsala health
 pcsala backup
-pcsala exec-demo
-pcsala models {list,status,health,start,stop,switch}
+pcsala models {list,status,health,start,stop,switch,vram,operation}
 ```
 
-## Models (GPU is exclusive — one at a time)
+## Models (GPU is exclusive for big models — one at a time)
 
-| Model | Port | Ctx | Gen tok/s | Notes |
+| Modelo | Porta | Ctx | Gen tok/s | Notas |
 |---|---|---|---|---|
-| Bonsai 27B GPU + MTP | 8080 | 55K | 28-48 | Primary |
-| Bonsai 9B CPU | 8090 | 32K | 6.08 | No MTP |
-| Laguna XS 2.1 CPU | 8091 | — | — | Disabled (frees RAM) |
-| Laguna XS 2.1 GPU | 8082 | 128K | ~47 | Pascal build |
-| Ornith 35B GPU | 8092 | — | ~40 | PrismML runtime; MTP experimental |
+| Bonsai 27B GPU + MTP | 8080 | 64K | 28-48 | Primario, residente |
+| Bonsai 4B GPU | 8093 | 64K | — | Residente (nao habilitado no boot) |
+| Bonsai 9B CPU | 8090 | 32K | 6.08 | Sem MTP |
+| Laguna XS 2.1 CPU | 8091 | — | — | Desativado (libera RAM) |
+| Laguna XS 2.1 GPU | 8082 | 128K | ~47 | Build Pascal; exclusivo |
+| Ornith 35B GPU | 8092 | — | ~40 | PrismML runtime; exclusivo |
+
+27B e 4B ficam residentes na GPU. O `switch` vale apenas entre os modelos
+grandes exclusivos (Laguna, Ornith).
+
+`pcsala models vram` mostra a VRAM usada por modelo e a folga (nvidia-smi).
+`start` e `switch` recusam o arranque se a folga for menor que 1,5 GB.
 
 Switch: `./pcsala models switch <model-id>` (e.g. `bonsai-27b-gpu`).
 
@@ -45,18 +51,21 @@ Switch: `./pcsala models switch <model-id>` (e.g. `bonsai-27b-gpu`).
 - Strict request/result contracts; deterministic planner (no command execution).
 - Interrupt classification without automatic retry; logical shutdown DRAINING -> CHECKPOINTING -> STOPPED.
 - Continuous worker + persistent task queue; reconciliation of RESERVED tasks.
-- Model manager for exclusive GPU switching.
+- Model manager for exclusive GPU switching (reserve_engine persisted in SQLite, CUDA_VISIBLE_DEVICES, lock em /run/pcsala/).
 - Document flow (pdfminer optional) and output collection/probing.
+- Slot save/restore de KV para documentos longos (desativado por default; ativar apenas apos validar MROPE num slot descartavel).
 
 ## Operations
 
-Services: `bonsai2-27b.service` (8080), `pcsala-worker.service`, optional `laguna-gpu.service` (8082), `ornith.service` (8092).
+Services: `bonsai2-27b.service` (8080), `pcsala-worker.service`, optional `bonsai-4b-gpu.service` (8093, residente, nao no boot), `laguna-gpu.service` (8082), `ornith.service` (8092).
 
 ```bash
 sudo systemctl {start|stop|status} bonsai2-27b.service pcsala-worker.service
 ./pcsala health
 ./pcsala reconcile
 ./pcsala backup
+./pcsala models list
+./pcsala models vram
 ```
 
 ## API policy
@@ -74,4 +83,3 @@ API required, API key not. Services accept `Authorization` but ignore it. Networ
 ## Docs
 
 Detailed guides: `guias/` (GUIA_MESTRE, MANUAL_GESTOR_API, TUTORIAL_GESTOR, diagnostics). State: `PROJECT_STATE.md`. Recovery procedure: `CONTINUITY.md`.
-""" , "filePath": "/home/igor/ia-sh/pc-sala-agent/README.md"}

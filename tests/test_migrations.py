@@ -18,10 +18,10 @@ def make_v1(path):
 def test_cria_esquema_e_repeticao_segura(tmp_path):
     path = tmp_path / "state.sqlite"
     first = migrate(path)
-    assert first["version"] == 5
-    assert first["applied"] == [1, 2, 3, 4, 5]
+    assert first["version"] == 6
+    assert first["applied"] == [1, 2, 3, 4, 5, 6]
     second = migrate(path)
-    assert second == {"version": 5, "applied": [], "backup": None}
+    assert second == {"version": 6, "applied": [], "backup": None}
     with connect(path) as db:
         assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         tables = {
@@ -32,6 +32,7 @@ def test_cria_esquema_e_repeticao_segura(tmp_path):
         assert {
             "projects", "sessions", "tasks", "attempts",
             "control_requests", "audit_events", "execution_acceptances",
+            "model_vram", "model_reservations",
         } <= tables
 
 def test_preserva_checkpoint_e_cria_backup(tmp_path):
@@ -44,7 +45,7 @@ def test_preserva_checkpoint_e_cria_backup(tmp_path):
     db.close()
 
     result = migrate(path)
-    assert result["applied"] == [2, 3, 4, 5]
+    assert result["applied"] == [2, 3, 4, 5, 6]
     backup_path = Path(result["backup"])
     assert backup_path.is_file()
 

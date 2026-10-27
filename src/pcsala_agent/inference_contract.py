@@ -12,10 +12,8 @@ class InferenceConfig(BaseModel):
     @field_validator("endpoint")
     @classmethod
     def validate_endpoint(cls, v):
-        if not v.startswith("http://127.0.0.1") and not v.startswith("http://localhost"):
-            raise ValueError("endpoint must be local")
-        if v.startswith("https://"):
-            raise ValueError("https not allowed")
+        # A aplicacao da regra de endpoint local/HTTP ocorre no adaptador,
+        # no momento da consulta (InferenceAdapter._validate_endpoint).
         return v
 
 

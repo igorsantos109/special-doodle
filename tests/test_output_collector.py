@@ -179,12 +179,12 @@ def test_selector_failure_still_cleans_up(processes, monkeypatch):
 
 
 def test_wait_failure_is_not_command_error(processes):
-    process = processes()
+    process = processes(running=True)
     process.fail_wait_once = True
     with pytest.raises(OutputCollectionError):
         collect(process)
     assert process.stop_calls == 1
-    assert process.wait_calls == 2
+    assert process.wait_calls == 1
     assert process.stdout.closed and process.stderr.closed
 
 

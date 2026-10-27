@@ -151,9 +151,11 @@ class ExecutionResult(BaseModel):
                 raise ValueError("status de controle exige exit_code None")
         return self
 
-    @field_validator("output_bytes")
+    @field_validator("output_bytes", mode="before")
     @classmethod
     def validate_output(cls, v):
-        if isinstance(v, bool) or v < 0 or v > 65536:
+        if isinstance(v, bool) or not isinstance(v, int):
+            raise ValueError("output_bytes fora de faixa")
+        if v < 0 or v > 65536:
             raise ValueError("output_bytes fora de faixa")
         return v

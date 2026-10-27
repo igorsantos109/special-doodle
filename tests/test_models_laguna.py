@@ -167,6 +167,7 @@ class TestLagunaModelRegistry:
         ids = {m.model_id for m in reg.list()}
         assert ids == {
             "bonsai-27b-gpu",
+            "bonsai-4b-gpu",
             "bonsai-9b-cpu",
             "laguna-xs-2.1-cpu",
             "laguna-xs-2.1-gpu",

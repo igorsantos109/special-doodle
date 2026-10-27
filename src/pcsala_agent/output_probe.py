@@ -6,12 +6,12 @@ from .output_collector import collect_output, validate_output_limits
 SCENARIOS = {
     "success": [
         sys.executable, "-c",
-        "import sys; sys.stdout.buffer.write(b'OK\n'); "
-        "sys.stderr.buffer.write(b'NOTE\n')",
+    "import sys; sys.stdout.buffer.write(b'OK\\n'); "
+    "sys.stderr.buffer.write(b'NOTE\\n')",
     ],
     "error": [
         sys.executable, "-c",
-        "import sys; sys.stderr.buffer.write(b'ERROR\n'); sys.exit(7)",
+        "import sys; sys.stderr.buffer.write(b'ERROR\\n'); sys.exit(7)",
     ],
     "binary": [
         sys.executable, "-c",

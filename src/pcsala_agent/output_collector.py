@@ -50,19 +50,19 @@ def _terminate(process, terminate):
     except Exception:
         pass
 
+def _terminate_or_fail(process, terminate):
+    """Chama terminate e propaga falha como OutputCollectionError."""
+    try:
+        terminate() if terminate is not None else process.terminate()
+    except Exception as exc:
+        _close_streams(process)
+        raise OutputCollectionError("falha ao encerrar processo") from exc
 
 def _wait_for_returncode(process):
     try:
         return process.wait(timeout=5)
-    except Exception:
-        try:
-            process.terminate()
-        except Exception:
-            pass
-        try:
-            return process.wait(timeout=5)
-        except Exception:
-            return process.poll()
+    except Exception as exc:
+        raise OutputCollectionError("nao foi possivel aguardar o processo") from exc
 
 
 def _clip(data, limit):
@@ -83,6 +83,7 @@ def collect_output(process, terminate=None, timeout_seconds=5, output_limit=6553
     try:
         sel = selectors.DefaultSelector()
     except OSError as exc:
+        _terminate_or_fail(process, terminate)
         _close_streams(process)
         raise OutputCollectionError("selector failure") from exc
     registered = []
@@ -93,6 +94,7 @@ def collect_output(process, terminate=None, timeout_seconds=5, output_limit=6553
                 sel.register(stream, selectors.EVENT_READ, (name, stream))
     except OSError as exc:
         sel.close()
+        _terminate_or_fail(process, terminate)
         _close_streams(process)
         raise OutputCollectionError("selector failure") from exc
     total_limit = output_limit
@@ -102,7 +104,7 @@ def collect_output(process, terminate=None, timeout_seconds=5, output_limit=6553
         try:
             data = os.read(stream.fileno(), 65536)
         except OSError as exc:
-            _terminate(process, terminate)
+            _terminate_or_fail(process, terminate)
             _close_streams(process)
             raise OutputCollectionError("read failure") from exc
         if not data:
@@ -124,7 +126,7 @@ def collect_output(process, terminate=None, timeout_seconds=5, output_limit=6553
             try:
                 events = sel.select(timeout)
             except OSError as exc:
-                _terminate(process, terminate)
+                _terminate_or_fail(process, terminate)
                 _close_streams(process)
                 raise OutputCollectionError("selector failure") from exc
             if not events:
@@ -137,7 +139,7 @@ def collect_output(process, terminate=None, timeout_seconds=5, output_limit=6553
                 name, stream = key.data
                 _do_read(name, stream)
                 total = len(stdout) + len(stderr)
-                if total >= total_limit:
+                if total > total_limit:
                     overflow = True
                     break
             if overflow:
@@ -149,14 +151,14 @@ def collect_output(process, terminate=None, timeout_seconds=5, output_limit=6553
 
         rc = process.poll()
         if timed_out:
+            _terminate_or_fail(process, terminate)
             if rc is None:
-                _terminate(process, terminate)
                 rc = _wait_for_returncode(process)
             if rc is None:
                 rc = -9
             status = "TIMEOUT"
         elif overflow:
-            _terminate(process, terminate)
+            _terminate_or_fail(process, terminate)
             if rc is None:
                 rc = _wait_for_returncode(process)
             if rc is None:
