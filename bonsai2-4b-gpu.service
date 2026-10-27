@@ -1,0 +1,37 @@
+[Unit]
+Description=Bonsai 2 4B PQ2_0 + MTP GPU (porta 8093, teste na P40)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+User=igor
+Group=igor
+WorkingDirectory=/home/igor
+ExecStart=/home/igor/opt/prism-pascal-build/build/bin/llama-server \
+    -m /home/igor/models/bonsai-2-4b/Ternary-Bonsai-2-4B-PQ2_0-MTP-Q8_0.gguf \
+    --spec-type draft-mtp --spec-draft-n-max 2 --spec-draft-p-min 0.4 \
+    --host 127.0.0.1 \
+    --port 8093 \
+    -c 65536 \
+    -t 4 \
+    -ngl 99 \
+    --flash-attn on \
+    -b 2048 -ub 512 \
+    -n 2048 \
+    --parallel 1 \
+    --no-jinja \
+    --threads-http 2
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=60s
+KillMode=control-group
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+UMask=0077
+
+[Install]
+# Sem enable por omissao: servico de teste, iniciar manualmente.
+WantedBy=multi-user.target
