@@ -24,8 +24,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 VENV_PYTHON = HERE / ".venv" / "bin" / "python"
 SRC_DIR = HERE / "src"
-BACKUP_DIR = Path("/home/igor/.config/pcsala-bonsai")
-WORKER_ROOT = Path("/var/lib/pcsala-worker")
+BACKUP_DIR = Path(
+    os.environ.get("PCSALA_BACKUP_DIR", "/home/igor/.config/pcsala-bonsai")
+)
+WORKER_ROOT = Path(os.environ.get("PCSALA_ROOT", "/var/lib/pcsala-worker"))
 
 
 def main():
