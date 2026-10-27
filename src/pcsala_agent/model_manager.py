@@ -6,17 +6,7 @@ from pathlib import Path
 
 from .database import connect
 
-KNOWN_MODELS = (
-    "bonsai-27b-gpu",
-    "bonsai-4b-gpu",
-    "bonsai-9b-cpu",
-    "laguna-xs-2.1-cpu",
-    "laguna-xs-2.1-gpu",
-    "ornith-35b-gpu",
-)
-
 GPU_SWITCH_LOCK_DIR = Path("/run/pcsala")
-GPU_SWITCH_LOCK = GPU_SWITCH_LOCK_DIR / "pcsala-gpu-switch.lock"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -29,6 +19,7 @@ class ModelSpec:
     exclusive_group: str | None
     endpoint: str
     capabilities: tuple
+    health_timeout_seconds: int = 600
 
 
 class ModelRegistry:
@@ -37,9 +28,10 @@ class ModelRegistry:
             "bonsai-27b-gpu": ModelSpec(
                 model_id="bonsai-27b-gpu", model_class="GPU",
                 profile="gpu-triage-v1", unit="bonsai2-27b.service",
-                shared=True, exclusive_group=None,
+                shared=False, exclusive_group="gpu-slot-1",
                 endpoint="http://127.0.0.1:8080",
                 capabilities=("triagem", "raciocinio"),
+                health_timeout_seconds=600,
             ),
             "bonsai-4b-gpu": ModelSpec(
                 model_id="bonsai-4b-gpu", model_class="GPU",
@@ -47,6 +39,7 @@ class ModelRegistry:
                 shared=True, exclusive_group=None,
                 endpoint="http://127.0.0.1:8093",
                 capabilities=("triagem", "resumo"),
+                health_timeout_seconds=120,
             ),
             "bonsai-9b-cpu": ModelSpec(
                 model_id="bonsai-9b-cpu", model_class="CPU",
@@ -54,6 +47,7 @@ class ModelRegistry:
                 shared=True, exclusive_group=None,
                 endpoint="http://127.0.0.1:8090",
                 capabilities=("triagem", "compressao"),
+                health_timeout_seconds=120,
             ),
             "laguna-xs-2.1-cpu": ModelSpec(
                 model_id="laguna-xs-2.1-cpu", model_class="CPU",
@@ -61,6 +55,7 @@ class ModelRegistry:
                 shared=True, exclusive_group=None,
                 endpoint="http://127.0.0.1:8091",
                 capabilities=("programacao", "contexto-longo"),
+                health_timeout_seconds=120,
             ),
             "laguna-xs-2.1-gpu": ModelSpec(
                 model_id="laguna-xs-2.1-gpu", model_class="GPU",
@@ -68,6 +63,7 @@ class ModelRegistry:
                 shared=False, exclusive_group="gpu-slot-1",
                 endpoint="http://127.0.0.1:8082",
                 capabilities=("programacao", "contexto-longo"),
+                health_timeout_seconds=300,
             ),
             "ornith-35b-gpu": ModelSpec(
                 model_id="ornith-35b-gpu", model_class="GPU",
@@ -75,6 +71,7 @@ class ModelRegistry:
                 shared=False, exclusive_group="gpu-slot-1",
                 endpoint="http://127.0.0.1:8092",
                 capabilities=("programacao", "triagem"),
+                health_timeout_seconds=300,
             ),
         }
 
@@ -158,10 +155,7 @@ class ModelCoordinator:
         return ModelOperation(operation_id=operation_id)
 
     def request_switch(self, from_model_id, to_model_id):
-        from_model = self.registry.get(from_model_id)
         to_model = self.registry.get(to_model_id)
-        if from_model is None:
-            raise ValueError(f"Modelo desconhecido: {from_model_id}")
         if to_model is None:
             raise ValueError(f"Modelo desconhecido: {to_model_id}")
         if to_model.exclusive_group is None:
@@ -169,6 +163,10 @@ class ModelCoordinator:
                 f"Modelo {to_model_id} e residente/compartilhado; "
                 "o switch aplica-se apenas a modelos exclusivos"
             )
+        if from_model_id is not None:
+            from_model = self.registry.get(from_model_id)
+            if from_model is None:
+                raise ValueError(f"Modelo desconhecido: {from_model_id}")
         db = self._db()
         operation_id = secrets.token_hex(8)
         if db is not None:
@@ -177,11 +175,61 @@ class ModelCoordinator:
                 """INSERT INTO model_operations
                 (operation_id, action, target_model_id, previous_status,
                  requested_status, status)
-                VALUES (?, 'switch', ?, 'RUNNING', 'READY', 'REQUESTED')""",
+                VALUES (?, 'switch', ?, NULL, 'READY', 'REQUESTED')""",
                 (operation_id, to_model_id),
             )
             db.commit()
         return ModelOperation(operation_id=operation_id)
+
+    def wait_for_health(self, model_id, timeout=None):
+        """Aguarda o endpoint /health do modelo retornar HTTP 200.
+
+        Retorna True se ficar saudável dentro do timeout, False caso
+        contrário. Se timeout for None, usa o health_timeout_seconds do
+        modelo.
+        """
+        import time as _time
+        import urllib.error
+        import urllib.request
+
+        model = self.registry.get(model_id)
+        if model is None:
+            raise ValueError(f"Modelo desconhecido: {model_id}")
+        if timeout is None:
+            timeout = model.health_timeout_seconds
+        url = model.endpoint.rstrip("/") + "/health"
+        deadline = _time.monotonic() + timeout
+        while _time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(url, timeout=5) as resp:
+                    if resp.status == 200:
+                        return True
+            except (urllib.error.URLError, OSError, ValueError):
+                pass
+            _time.sleep(2)
+        return False
+
+    def update_confirmed_status(self, operation_id, status, error=None):
+        """Grava confirmed_status (e status) na operação de modelo."""
+        db = self._db()
+        if db is None:
+            return
+        self._ensure_model_operations_table(db)
+        db.execute(
+            """UPDATE model_operations
+            SET confirmed_status=?, status=?,
+                updated_at=strftime('%Y-%m-%dT%H:%M:%S','now')
+            WHERE operation_id=?""",
+            (status, status, operation_id),
+        )
+        if error is not None:
+            db.execute(
+                """UPDATE model_operations
+                SET error=?
+                WHERE operation_id=?""",
+                (error, operation_id),
+            )
+        db.commit()
 
     def _ensure_model_operations_table(self, db):
         db.execute(
@@ -334,14 +382,13 @@ class ModelCoordinator:
 
 
 def _unit_active(unit):
-    import subprocess  # noqa: F401
     try:
         result = subprocess.run(
             ["systemctl", "is-active", unit],
-            capture_output=True, text=True, timeout=3,
+            check=False, capture_output=True, text=True, timeout=3,
         )
         return result.stdout.strip() == "active"
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
@@ -365,7 +412,3 @@ class ModelStatus:
 class ModelOperation:
     def __init__(self, operation_id):
         self.operation_id = operation_id
-
-
-def _connect_cm(database):
-    return connect(database)

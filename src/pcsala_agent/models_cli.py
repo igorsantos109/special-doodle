@@ -20,6 +20,7 @@ from .model_vram import ModelVramStore
 VRAM_GUARD_MIN_FREE_MB = 1536  # 1,5 GB
 VRAM_RELEASE_WAIT_SECONDS = 30
 VRAM_RELEASE_POLL_SECONDS = 1
+HEALTH_POLL_SECONDS = 2
 
 
 class ModelsCLI:
@@ -44,28 +45,45 @@ class ModelsCLI:
             os.environ.get("PCSALA_LOCK_DIR", GPU_SWITCH_LOCK_DIR))
         self.skip_vram_guard = skip_vram_guard
 
+        # Tabela de despacho de subcomandos.
+        self._commands = {
+            "list": self._cmd_list,
+            "status": self._cmd_status,
+            "health": self._cmd_health,
+            "start": self._cmd_start,
+            "stop": self._cmd_stop,
+            "switch": self._cmd_switch,
+            "vram": self._cmd_vram,
+            "operation": self._cmd_operation,
+        }
+
+    def close(self):
+        """Fecha recursos (conexão SQLite do ModelVramStore)."""
+        if self.vram_store is not None:
+            self.vram_store.db.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
     # ------------------------------------------------------------------ run
 
     def run(self, args):
         command = args[0] if args else None
-        if command == "list":
-            return self._cmd_list()
-        if command == "status":
-            return self._cmd_status(args[1])
-        if command == "health":
-            return self._cmd_health(args[1])
-        if command == "start":
-            return self._cmd_start(args[1])
-        if command == "stop":
-            return self._cmd_stop(args[1])
-        if command == "switch":
-            return self._cmd_switch(args[1])
-        if command == "vram":
-            return self._cmd_vram()
-        if command == "operation":
-            return self._cmd_operation(args[1])
-        print(f"comando desconhecido: {command}", file=sys.stderr)
-        return 2
+        handler = self._commands.get(command)
+        if handler is None:
+            print(f"comando desconhecido: {command}", file=sys.stderr)
+            return 2
+        if command in ("status", "health", "start", "stop", "switch",
+                       "operation"):
+            if len(args) < 2:
+                print(f"{command} requer um modelo", file=sys.stderr)
+                return 2
+            return handler(args[1])
+        return handler()
 
     # ---------------------------------------------------------------- list
 
@@ -118,19 +136,42 @@ class ModelsCLI:
             print("Recusando arranque: VRAM livre abaixo de 1,5 GB",
                   file=sys.stderr)
             return 3
+        op = self.coordinator.request_start(model_id)
         try:
             with switch_lock(self.lock_dir):
                 self.coordinator.reserve_engine(model_id, requester="cli")
-                op = self.coordinator.request_start(model_id)
                 code = self.systemctl("start", model.unit)
+                if code != 0:
+                    print(f"Falha ao iniciar {model.unit} (codigo {code})",
+                          file=sys.stderr)
+                    self.coordinator.update_confirmed_status(
+                        op.operation_id, "FAILED",
+                        error=f"systemctl start codigo {code}",
+                    )
+                    self.coordinator.release_engine(model_id)
+                    return code
+                # Aguarda o endpoint /health ficar disponível.
+                healthy = self.coordinator.wait_for_health(model_id)
+                if not healthy:
+                    print(f"Falha: {model.unit} nao respondeu /health "
+                          f"dentro do tempo esperado",
+                          file=sys.stderr)
+                    self.coordinator.update_confirmed_status(
+                        op.operation_id, "FAILED",
+                        error="timeout aguardando /health",
+                    )
+                    self.coordinator.release_engine(model_id)
+                    return 1
+                self.coordinator.update_confirmed_status(
+                    op.operation_id, "COMPLETED",
+                )
         except ExecutorBusy:
             print("Bloqueio de troca de GPU ocupado", file=sys.stderr)
+            self.coordinator.update_confirmed_status(
+                op.operation_id, "FAILED",
+                error="bloqueio de troca ocupado",
+            )
             return 3
-        if code != 0:
-            print(f"Falha ao iniciar {model.unit} (codigo {code})",
-                  file=sys.stderr)
-            self.coordinator.release_engine(model_id)
-            return code
         print(f"{model_id}: iniciado (operacao {op.operation_id})")
         return 0
 
@@ -164,7 +205,8 @@ class ModelsCLI:
             return 1
         if to_model.exclusive_group is None:
             print(f"Recusando switch: {target_model_id} e residente/compartilhado; "
-                  "o switch aplica-se apenas a modelos exclusivos (Laguna, Ornith)",
+                  "o switch aplica-se apenas a modelos exclusivos "
+                  "(27B, Laguna GPU, Ornith)",
                   file=sys.stderr)
             return 3
         from_model_id = None
@@ -179,6 +221,8 @@ class ModelsCLI:
             return 0
         from_model = self.registry.get(from_model_id) if from_model_id else None
 
+        op = self.coordinator.request_switch(
+            from_model_id, target_model_id)
         try:
             with switch_lock(self.lock_dir):
                 self.coordinator.reserve_engine(target_model_id, requester="cli")
@@ -190,6 +234,10 @@ class ModelsCLI:
                         print(f"Falha ao parar {from_model_id} (codigo {code})",
                               file=sys.stderr)
                         self.coordinator.release_engine(target_model_id)
+                        self.coordinator.update_confirmed_status(
+                            op.operation_id, "FAILED",
+                            error=f"systemctl stop {from_model_id} codigo {code}",
+                        )
                         return code
                     self._await_vram_release()
                 # Guarda de VRAM apos liberacao (falha fechada).
@@ -197,20 +245,96 @@ class ModelsCLI:
                     print("Recusando troca: VRAM livre abaixo de 1,5 GB "
                           "apos liberacao", file=sys.stderr)
                     self.coordinator.release_engine(target_model_id)
-                    if from_model is not None:
-                        self.coordinator.release_engine(from_model_id)
+                    self.coordinator.update_confirmed_status(
+                        op.operation_id, "FAILED",
+                        error="VRAM livre abaixo de 1,5 GB apos liberacao",
+                    )
                     return 3
                 code = self.systemctl("start", to_model.unit)
+                if code != 0:
+                    print(f"Falha ao iniciar {to_model.unit} (codigo {code})",
+                          file=sys.stderr)
+                    self.coordinator.release_engine(target_model_id)
+                    self.coordinator.update_confirmed_status(
+                        op.operation_id, "FAILED",
+                        error=f"systemctl start {to_model.unit} codigo {code}",
+                    )
+                    # Rollback: tentar religar o modelo anterior.
+                    if from_model is not None:
+                        rc2 = self.systemctl("start", from_model.unit)
+                        if rc2 == 0:
+                            healthy = self.coordinator.wait_for_health(
+                                from_model_id)
+                            if healthy:
+                                self.coordinator.update_confirmed_status(
+                                    op.operation_id, "ROLLED_BACK",
+                                    error=(f"novo modelo falhou; "
+                                           f"{from_model_id} religado"),
+                                )
+                            else:
+                                self.coordinator.update_confirmed_status(
+                                    op.operation_id, "ROLLBACK_FAILED",
+                                    error=(f"novo modelo falhou; "
+                                           f"{from_model_id} nao ficou saudavel"),
+                                )
+                        else:
+                            self.coordinator.update_confirmed_status(
+                                op.operation_id, "ROLLBACK_FAILED",
+                                error=(f"novo modelo falhou; "
+                                       f"rollback de {from_model_id} "
+                                       f"codigo {rc2}"),
+                            )
+                    return code
+                # Aguarda o endpoint /health do novo modelo.
+                healthy = self.coordinator.wait_for_health(target_model_id)
+                if not healthy:
+                    print(f"Falha: {to_model.unit} nao respondeu /health "
+                          f"dentro do tempo esperado",
+                          file=sys.stderr)
+                    self.coordinator.release_engine(target_model_id)
+                    self.coordinator.update_confirmed_status(
+                        op.operation_id, "FAILED",
+                        error="timeout aguardando /health",
+                    )
+                    # Rollback: tentar religar o modelo anterior.
+                    if from_model is not None:
+                        rc2 = self.systemctl("start", from_model.unit)
+                        if rc2 == 0:
+                            healthy2 = self.coordinator.wait_for_health(
+                                from_model_id)
+                            if healthy2:
+                                self.coordinator.update_confirmed_status(
+                                    op.operation_id, "ROLLED_BACK",
+                                    error=(f"novo modelo nao ficou saudavel; "
+                                           f"{from_model_id} religado"),
+                                )
+                            else:
+                                self.coordinator.update_confirmed_status(
+                                    op.operation_id, "ROLLBACK_FAILED",
+                                    error=(f"novo modelo nao ficou saudavel; "
+                                           f"{from_model_id} nao ficou saudavel"),
+                                )
+                        else:
+                            self.coordinator.update_confirmed_status(
+                                op.operation_id, "ROLLBACK_FAILED",
+                                error=(f"novo modelo nao ficou saudavel; "
+                                       f"rollback de {from_model_id} "
+                                       f"codigo {rc2}"),
+                            )
+                    return 1
+                self.coordinator.update_confirmed_status(
+                    op.operation_id, "COMPLETED",
+                )
                 if from_model is not None:
                     self.coordinator.release_engine(from_model_id)
         except ExecutorBusy:
             print("Bloqueio de troca de GPU ocupado", file=sys.stderr)
-            return 3
-        if code != 0:
-            print(f"Falha ao trocar para {target_model_id} (codigo {code})",
-                  file=sys.stderr)
             self.coordinator.release_engine(target_model_id)
-            return code
+            self.coordinator.update_confirmed_status(
+                op.operation_id, "FAILED",
+                error="bloqueio de troca ocupado",
+            )
+            return 3
         origem = from_model_id or "-"
         print(f"Troca concluida: {origem} -> {target_model_id}")
         return 0
@@ -259,7 +383,8 @@ class ModelsCLI:
         if self.vram_store is None:
             print("  armazenamento nao configurado")
         else:
-            rows = self.vram_store.all()
+            with self.vram_store.db:
+                rows = self.vram_store.all()
             if not rows:
                 print("  (nenhuma medida registrada)")
             for row in rows:
@@ -329,12 +454,14 @@ def main(argv=None):
     db_path = args.db
     if db_path is None:
         db_path = str(Path(args.root) / "state.sqlite")
-    cli = ModelsCLI(
+    with ModelsCLI(
         db_path=db_path,
         skip_vram_guard=args.sem_guarda_vram,
-    )
-    return cli.run([args.command, args.model_id] if args.model_id
-                   else [args.command])
+    ) as cli:
+        command_args = [args.command]
+        if args.model_id:
+            command_args.append(args.model_id)
+        return cli.run(command_args)
 
 
 if __name__ == "__main__":

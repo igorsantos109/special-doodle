@@ -1,0 +1,34 @@
+# Regra polkit para unidades pc-sala-agent
+# Permite que o usuário igor (grupo igor) inicie/paro/reinicie apenas
+# as units do registro de modelos, sem precisar de senha sudo.
+#
+# Instalação:
+#   sudo install -o root -g root -m 0644 deploy/polkit/50-pcsala.rules \
+#       /etc/polkit-1/rules.d/50-pcsala.rules
+#
+# Teste manual (como igor):
+#   systemctl start bonsai2-27b.service   # deve funcionar sem senha
+#   systemctl stop bonsai2-27b.service    # deve funcionar sem senha
+#   systemctl start ssh.service           # deve NEGAR (não está na lista)
+#   systemctl start nginx.service         # deve NEGAR (não está na lista)
+
+polkit.addRule(function(action, subject) {
+    if (subject.user != "igor") {
+        return;
+    }
+
+    var allowed_units = [
+        "pcsala-worker.service",
+        "bonsai2-27b.service",
+        "bonsai-4b-gpu.service",
+        "bonsai2-cpu.service",
+        "laguna.service",
+        "laguna-gpu.service",
+        "ornith.service",
+    ];
+
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        allowed_units.indexOf(action.subject) !== -1) {
+        return polkit.Result.YES;
+    }
+});
