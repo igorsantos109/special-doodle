@@ -1,0 +1,78 @@
+# Estado consolidado — 2026-10-22 (Laguna XS 2.1 como perfil opcional)
+
+## Baseline verificado
+
+**471 testes, 0 falhas** (+26 testes Laguna: perfil, contratos, registo, coordenação)
+
+**Demonstrações reais comprovadas:**
+- CLI corrigida pós-reboot: health, list, status operacionais
+- Worker → Bonsai 27B GPU → CONCLUIDO (tarefa 8: "GESTOR")
+- Gestor de modelos: cadastro, consulta, saúde autenticada, rejeição de alvo desconhecido
+- `ensure_model_ready` idempotente em motor já pronto
+- Operações persistidas e consultáveis
+- Troca GPU bloqueada com motor ocupado
+- CPU compartilhado protegido contra stop individual
+
+## Módulos (48 arquivos)
+
+### Novos (desde último relatório)
+`model_manager.py`, `models_cli.py`, `migrations/005_model_operations.sql`, `configs/laguna.service`, `tests/test_models_laguna.py`
+
+### Gestor de modelos (1)
+`model_manager.py` (+ interface CLI `models_cli.py`): `ModelInfo`, `ModelRegistry`, `ModelCoordinator`, coordenação GPU/CPU, persistência de operações, autorização por política
+
+## Matriz implementado/demonstrado/pendente/bloqueado
+
+| Funcionalidade | Implementado | Demonstrado | Pendente | Bloqueado |
+|---|---|---|---|---|
+| Inferência 27B GPU | ✅ | ✅ | - | - |
+| Inferência 9B CPU | ✅ | ✅ | - | - |
+| **Laguna XS 2.1 (perfil)** | ✅ registo/testes | ❌ (pesos GGUF ausentes) | Descarregar GGUF oficial de poolside/Laguna-XS-2.1-GGUF; instalar unit; validar inferência | GPU engine sem LAGUNA |
+| **Gestor de modelos** | ✅ | ✅ (cadastro, saúde, start idempotente, stop rejeitado, operações) | Troca GPU real | - |
+| Fila persistente | ✅ | ✅ (Alpha/Beta, GESTOR) | - | - |
+| Worker contínuo | ✅ | ✅ | - | - |
+| Recuperação pós-reboot | ✅ | ✅ (22/10/2026, boot 7def503f) | - | - |
+| Rotação de chave | ✅ | ✅ | - | - |
+| **Executor integrado** | ✅ | ✅ (sintético, pcsala-executor) | Projectos reais de Igor | - |
+| **Contexto/compressão** | ✅ | ✅ (token counting, budget, compressão 9B) | - | - |
+| **Fluxo documental** | ✅ | ✅ (sintético, CLI, fila) | Dependências: pdfminer, python-docx | - |
+| **Reconciliação** | ✅ | ✅ (sem/com artefacto) | - | - |
+| **Backup/restauração** | ✅ | ✅ (raiz separada) | - | - |
+| Testes em projectos reais | - | - | Igor autorizar | - |
+
+## Comandos prontos
+
+```bash
+# CLI unificada
+./pcsala health                                # verificar servicos
+./pcsala enqueue --prompt "texto"              # submeter tarefa textual
+./pcsala document --path /tmp/doc.txt          # submeter documento
+./pcsala document-deps                         # dependencias sugeridas
+./pcsala list                                  # listar tarefas
+./pcsala status <id>                           # consultar tarefa
+./pcsala cancel <id>                           # cancelar
+./pcsala reconcile                             # reconciliar RESERVED
+./pcsala backup                                # backup completo
+./pcsala exec-demo                             # demo executor integrado
+
+# Gestao de modelos
+./pcsala models list                           # listar modelos
+./pcsala models status <modelo>                # estado detalhado
+./pcsala models health <modelo>                # saude autenticada
+./pcsala models start <modelo>                 # iniciar (idempotente)
+./pcsala models stop <modelo>                  # parar (CPU compartilhado rejeita)
+./pcsala models switch <modelo>                # troca GPU (exclusiva)
+./pcsala models operation <id>                 # consultar operacao
+
+# Demonstrações
+PYTHONPATH="$PWD/src" .venv/bin/python /tmp/demo_executor_integrado.py
+PYTHONPATH="$PWD/src" .venv/bin/python /tmp/demo_reconcile_backup.py
+PYTHONPATH="$PWD/src" .venv/bin/python -m pytest tests/ -v --tb=short
+```
+
+## Decisões que dependem exclusivamente de Igor
+
+1. **Momento do reboot** para validar recuperação.
+2. **Autorização para projectos reais** no executor isolado.
+3. **Instalação de dependências documentais** (`pdfminer.six`, `python-docx`, etc — ver `./pcsala document-deps`).
+4. **Definição de directórios autorizados** adicionais para fluxo documental.

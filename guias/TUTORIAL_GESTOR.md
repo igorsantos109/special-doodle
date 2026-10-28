@@ -20,6 +20,7 @@
 | `bonsai-27b-gpu` | Bonsai 27B + MTP | 8080 | padrão, raciocínio geral |
 | `laguna-xs-2.1-gpu` | Laguna XS 2.1 | 8082 | programação, 128K ctx, ~47 tok/s |
 | `ornith-35b-gpu` | Ornith 35B | 8092 | programação, ~40 tok/s |
+| `nemotron-3.5-30b-gpu` | Nemotron 3.5 Ternary 30B | 8083 | leitura/RAG/síntese, 262K ctx; ≤32K interativo (≥73 tok/s), fraco em matemática |
 
 ### CPU (compartilhado)
 
@@ -35,6 +36,20 @@
 curl -s http://127.0.0.1:8082/health
 ```
 
+## Trocar para Nemotron
+
+```bash
+./pcsala models switch nemotron-3.5-30b-gpu
+curl -s http://127.0.0.1:8083/health      # deve devolver 200
+
+# ou, sem guarda e com confirmação, pelo gestor diário:
+ia solo nemotron
+```
+
+As tarefas usam o perfil do modelo: `--profile nemotron-ternary-v1`.
+Verifica a fila antes de trocar — o perfil `gpu-triage-v1` fica sem
+servidor enquanto o Nemotron estiver sozinho na GPU.
+
 ## Voltar ao Bonsai
 
 ```bash
@@ -44,3 +59,4 @@ curl -s http://127.0.0.1:8082/health
 ## Dica
 
 Use `./pcsala health` para diagnóstico completo do sistema.
+Para o gestor `ia` (estado, liga/desliga, `doctor`): `guias/GUIA_DIDATICA_IA.md`.

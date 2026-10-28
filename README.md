@@ -35,10 +35,11 @@ pcsala models {list,status,health,start,stop,switch,vram,operation}
 | Laguna XS 2.1 CPU | 8091 | — | — | Desativado (libera RAM) |
 | Laguna XS 2.1 GPU | 8082 | 128K | ~47 | Build Pascal; exclusivo (gpu-slot-1) |
 | Ornith 35B GPU | 8092 | — | ~40 | PrismML runtime; exclusivo (gpu-slot-1) |
+| Nemotron 3.5 Ternary 30B | 8083 | 262K | 100 -> 24.9 | Q2_0 ternario 8.82 GiB; exclusivo (gpu-slot-1); perfil `nemotron-ternary-v1` |
 
-Apenas o Bonsai 4B fica residente na GPU. O Bonsai 27B, Laguna GPU e
-Ornith compoem o grupo exclusivo `gpu-slot-1`: apenas um fica carregado
-por vez. O `switch` aplica-se apenas a modelos desse grupo.
+Apenas o Bonsai 4B fica residente na GPU. O Bonsai 27B, Laguna GPU,
+Ornith e Nemotron compoem o grupo exclusivo `gpu-slot-1`: apenas um fica
+carregado por vez. O `switch` aplica-se apenas a modelos desse grupo.
 
 `pcsala models vram` mostra a VRAM usada por modelo e a folga (nvidia-smi).
 `start` e `switch` recusam o arranque se a folga for menor que 1,5 GB.
@@ -59,7 +60,7 @@ Switch: `./pcsala models switch <model-id>` (e.g. `bonsai-27b-gpu` ou
 
 ## Operations
 
-Services: `bonsai2-27b.service` (8080), `pcsala-worker.service`, optional `bonsai-4b-gpu.service` (8093, residente, nao no boot), `laguna-gpu.service` (8082), `ornith.service` (8092).
+Services: `bonsai2-27b.service` (8080), `pcsala-worker.service`, optional `bonsai-4b-gpu.service` (8093, residente, nao no boot), `laguna-gpu.service` (8082), `ornith.service` (8092), `nemotron.service` (8083, enabled/parado).
 
 ```bash
 sudo systemctl {start|stop|status} bonsai2-27b.service pcsala-worker.service
@@ -84,4 +85,13 @@ API required, API key not. Services accept `Authorization` but ignore it. Networ
 
 ## Docs
 
-Detailed guides: `guias/` (GUIA_MESTRE, MANUAL_GESTOR_API, TUTORIAL_GESTOR, diagnostics). State: `PROJECT_STATE.md`. Recovery procedure: `CONTINUITY.md`.
+Detailed guides: `guias/` (GUIA_MESTRE, **GUIA_DIDATICA_IA** for the
+daily `ia` manager, MANUAL_GESTOR_API, TUTORIAL_GESTOR, diagnostics).
+State: `PROJECT_STATE.md`. Recovery procedure: `CONTINUITY.md`.
+
+Model benchmarks: `scripts/bench_nemotron.py` (tok/s by task/context) and
+`scripts/bench_contexto_max.py` (64K/131K/196K prefill + VRAM).
+
+Daily model operations without sudo need `/etc/tmpfiles.d/pcsala.conf`
+(lock dir) and `/etc/polkit-1/rules.d/50-pcsala.rules` (unit allowlist);
+see GUIA_MESTRE → Permissões.

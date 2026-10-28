@@ -1,0 +1,57 @@
+# laguna-gpu.service — Laguna XS 2.1 APEX I-Compact na GPU (P40 Pascal)
+#
+# GPU exclusive, usa o build Pascal (PrismML) com -ngl 40 (full offload).
+# Porta 8082 (substitui a porta anterior do Ornith).
+# Contexto 128K confirmado funcional (VRAM ~20 GB).
+#
+# ATIVACAO:
+#   sudo cp configs/laguna-gpu.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now laguna-gpu.service
+#
+# REQUISITOS:
+#   - /home/igor/models/laguna-xs-2-1/Laguna-XS-2.1-APEX-I-Compact.gguf (15 GB)
+#   - /home/igor/opt/prism-pascal-build/build/bin/llama-server (Pascal build)
+#   - GPU livre (parar Bonsai antes: systemctl stop bonsai2-27b.service)
+#
+# REVERSAO:
+#   sudo systemctl disable --now laguna-gpu.service
+#   sudo rm /etc/systemd/system/laguna-gpu.service
+#   sudo systemctl daemon-reload
+
+[Unit]
+Description=Laguna XS 2.1 GPU (porta 8082) — programação/depuração
+Wants=network-online.target
+After=network-online.target
+Conflicts=bonsai2-27b.service ornith.service
+
+[Service]
+Type=exec
+User=igor
+Group=igor
+WorkingDirectory=/home/igor
+Environment=LD_LIBRARY_PATH=/home/igor/opt/prism-pascal-build/build/bin
+ExecStart=/home/igor/opt/prism-pascal-build/build/bin/llama-server \
+    -m /home/igor/models/laguna-xs-2-1/Laguna-XS-2.1-APEX-I-Compact.gguf \
+    --host 0.0.0.0 \
+    --port 8082 \
+    -c 131072 \
+    -t 8 \
+    -ngl 40 \
+    --no-kv-offload \
+    -n 4096 \
+    --parallel 1 \
+    --no-jinja \
+    --threads-http 4
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+KillMode=control-group
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
