@@ -1,222 +1,197 @@
-"""CLI da fila de tarefas: enqueue, document, list, status, cancel, reconcile, health."""
 import argparse
-import sqlite3
+import json
 import sys
 from pathlib import Path
 
-from .database import connect
-
-MODEL_ENDPOINTS = {
-    "bonsai-27b-gpu": ("127.0.0.1", 8080),
-    "bonsai-4b-gpu": ("127.0.0.1", 8093),
-    "bonsai-9b-cpu": ("127.0.0.1", 8090),
-    "laguna-xs-2.1-cpu": ("127.0.0.1", 8091),
-    "laguna-xs-2.1-gpu": ("127.0.0.1", 8082),
-    "ornith-35b-gpu": ("127.0.0.1", 8092),
-}
+from .task_queue import (
+    cancel, enqueue, get, list_tasks, reconcile,
+)
+from .document_flow import (
+    extract_document, build_analysis_prompt,
+    DEPENDENCIES_SUGGESTED,
+)
 
 
-class QueueCLI:
-    def __init__(self, root):
-        self.root = Path(root)
-        self.db_path = self.root / "state.sqlite"
+def _check_service(name):
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["systemctl", "is-active", name],
+            capture_output=True, text=True, timeout=5,
+        )
+        return out.stdout.strip() == "active"
+    except Exception:
+        return False
 
-    def run(self, args):
-        command = args[0] if args else None
-        if command == "enqueue":
-            return self._cmd_enqueue(args[1:])
-        if command == "document":
-            return self._cmd_document(args[1:])
-        if command == "document-deps":
-            return self._cmd_document_deps()
-        if command == "list":
-            return self._cmd_list(args[1:])
-        if command == "status":
-            return self._cmd_status(args[1])
-        if command == "cancel":
-            return self._cmd_cancel(args[1])
-        if command == "reconcile":
-            return self._cmd_reconcile()
-        if command == "health":
-            return self._cmd_health()
-        print(f"comando desconhecido: {command}", file=sys.stderr)
-        return 2
 
-    # --------------------------------------------------------------- enqueue
+def _reconcile_cmd(database, args):
+    root = args.root
+    graph_root = root
+    reconciled = 0
+    failed = 0
 
-    def _cmd_enqueue(self, args):
-        parser = argparse.ArgumentParser(prog="pcsala enqueue")
-        parser.add_argument("--prompt", required=True)
-        parser.add_argument("--profile", default="gpu-triage-v1")
-        parser.add_argument("--idempotency-key")
-        ns = parser.parse_args(args)
-        return self._insert_task(ns.prompt, ns.profile, ns.idempotency_key)
+    reserved = list_tasks(database, status="RESERVED")
+    if not reserved:
+        print("Nenhuma tarefa RESERVED para reconciliar")
+        return 0
 
-    def _cmd_document(self, args):
-        parser = argparse.ArgumentParser(prog="pcsala document")
-        parser.add_argument("--path", required=True)
-        parser.add_argument("--profile", default="gpu-triage-v1")
-        parser.add_argument("--idempotency-key")
-        ns = parser.parse_args(args)
-        path = Path(ns.path)
-        if not path.exists():
-            print(f"arquivo nao encontrado: {path}", file=sys.stderr)
-            return 1
-        prompt = path.read_text(encoding="utf-8")
-        return self._insert_task(prompt, ns.profile, ns.idempotency_key)
-
-    def _insert_task(self, prompt, profile, idempotency_key):
-        db = connect(self.db_path)
-        try:
-            with db:
-                db.execute(
-                    """INSERT INTO task_queue
-                    (idempotency_key, profile, prompt, status)
-                    VALUES (?, ?, ?, 'QUEUED')""",
-                    (idempotency_key, profile, prompt),
-                )
-                row = db.execute(
-                    "SELECT id, status FROM task_queue WHERE rowid=last_insert_rowid()"
-                ).fetchone()
-            print(f"enfileirado id={row['id']} status={row['status']}")
-            return 0
-        except sqlite3.IntegrityError:
-            print("idempotencia chave duplicada; tarefa nao enfileirada",
+    for task in reserved:
+        tid = task["id"]
+        attempt_id = task["attempt_id"]
+        task_session = f"queue-{tid}"
+        task_id = f"task-{tid}"
+        r = reconcile(database, tid, graph_root=graph_root,
+                      graph_attempt_id=attempt_id)
+        if r:
+            reconciled += 1
+            print(f"Tarefa {tid}: reconciliada do grafo")
+        else:
+            failed += 1
+            print(f"Tarefa {tid}: sem artefato confirmado no grafo",
                   file=sys.stderr)
-            return 1
-        finally:
-            db.close()
 
-    # ---------------------------------------------------------- document-deps
-
-    def _cmd_document_deps(self):
-        print("pdfminer.six")
-        return 0
-
-    # ---------------------------------------------------------------- list
-
-    def _cmd_list(self, args):
-        parser = argparse.ArgumentParser(prog="pcsala list")
-        parser.add_argument("--status")
-        ns = parser.parse_args(args)
-        db = connect(self.db_path)
-        try:
-            if ns.status:
-                rows = db.execute(
-                    """SELECT id,status,profile,prompt,created_at
-                    FROM task_queue WHERE status=? ORDER BY id""",
-                    (ns.status,),
-                ).fetchall()
-            else:
-                rows = db.execute(
-                    """SELECT id,status,profile,prompt,created_at
-                    FROM task_queue ORDER BY id DESC LIMIT 50"""
-                ).fetchall()
-        finally:
-            db.close()
-        if not rows:
-            print("(nenhuma tarefa)")
-            return 0
-        for row in rows:
-            prompt = (row["prompt"] or "")[:60].replace("\n", " ")
-            print(f"{row['id']:>4} {row['status']:<12} {row['profile']:<16} "
-                  f"{row['created_at']}  {prompt}")
-        return 0
-
-    # ---------------------------------------------------------------- status
-
-    def _cmd_status(self, task_id):
-        db = connect(self.db_path)
-        try:
-            row = db.execute(
-                """SELECT id,status,profile,prompt,inference_response,
-                inference_status,error,created_at,completed_at
-                FROM task_queue WHERE id=?""",
-                (int(task_id),),
-            ).fetchone()
-        finally:
-            db.close()
-        if row is None:
-            print(f"tarefa nao encontrada: {task_id}", file=sys.stderr)
-            return 1
-        print(f"id: {row['id']}")
-        print(f"status: {row['status']}")
-        print(f"profile: {row['profile']}")
-        print(f"prompt: {row['prompt']}")
-        print(f"inference_status: {row['inference_status'] or '-'}")
-        print(f"inference_response: {row['inference_response'] or '-'}")
-        print(f"error: {row['error'] or '-'}")
-        print(f"criado: {row['created_at']}")
-        print(f"concluido: {row['completed_at'] or '-'}")
-        return 0
-
-    # ---------------------------------------------------------------- cancel
-
-    def _cmd_cancel(self, task_id):
-        db = connect(self.db_path)
-        try:
-            with db:
-                cur = db.execute(
-                    "UPDATE task_queue SET status='CANCELLED' WHERE id=?",
-                    (int(task_id),),
-                )
-            if cur.rowcount == 0:
-                print(f"tarefa nao encontrada: {task_id}", file=sys.stderr)
-                return 1
-            print(f"tarefa {task_id} cancelada")
-            return 0
-        finally:
-            db.close()
-
-    # ------------------------------------------------------------- reconcile
-
-    def _cmd_reconcile(self):
-        db = connect(self.db_path)
-        try:
-            with db:
-                cur = db.execute(
-                    """UPDATE task_queue
-                    SET status='QUEUED', reserved_at=NULL
-                    WHERE status='RESERVED'
-                    AND reserved_at IS NOT NULL
-                    AND reserved_at < strftime('%Y-%m-%dT%H:%M:%S','now','-5 minutes')"""
-                )
-            print(f"reconciliadas {cur.rowcount} tarefas RESERVED -> QUEUED")
-            return 0
-        finally:
-            db.close()
-
-    # ---------------------------------------------------------------- health
-
-    def _cmd_health(self):
-        import socket
-        overall = True
-        for model, (host, port) in MODEL_ENDPOINTS.items():
-            ok = False
-            try:
-                with socket.create_connection((host, port), timeout=1):
-                    ok = True
-            except OSError:
-                ok = False
-            if not ok:
-                overall = False
-            print(f"  {model}: {host}:{port} -> {'online' if ok else 'offline'}")
-        return 0 if overall else 1
+    print(f"\nReconciliadas: {reconciled}, Sem artefato: {failed}")
+    return 0 if failed == 0 else 1
 
 
-def main(argv=None):
+def main():
     parser = argparse.ArgumentParser(
-        prog="pcsala queue", description="Fila de tarefas pc-sala-agent")
-    parser.add_argument("--root", default="/var/lib/pcsala-worker")
-    parser.add_argument("command", nargs="?", default=None)
-    parser.add_argument("rest", nargs=argparse.REMAINDER)
-    args = parser.parse_args(argv)
-    cli = QueueCLI(args.root)
-    rest = args.rest if args.command else []
-    if args.command:
-        rest = [args.command, *rest]
-    return cli.run(rest)
+        description="Fila de tarefas do worker LangGraph")
+    parser.add_argument("--root", type=Path, required=True,
+                        help="Raiz persistente do worker")
+
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    enq = sub.add_parser("enqueue", help="Enfileirar tarefa")
+    enq.add_argument("--prompt", required=True)
+    enq.add_argument("--profile", default="gpu-triage-v1")
+    enq.add_argument("--idempotency-key")
+
+    lst = sub.add_parser("list", help="Listar tarefas")
+    lst.add_argument("--status", choices=("QUEUED", "RESERVED",
+                                          "COMPLETED", "FAILED", "CANCELLED"))
+
+    st = sub.add_parser("status", help="Consultar estado de tarefa")
+    st.add_argument("id", type=int)
+
+    cn = sub.add_parser("cancel", help="Cancelar tarefa na fila")
+    cn.add_argument("id", type=int)
+
+    rc = sub.add_parser("reconcile", help="Reconciliar tarefas RESERVED"
+                        " com artefactos do grafo")
+
+    hl = sub.add_parser("health", help="Verificar saude dos servicos")
+
+    doc = sub.add_parser("document", help="Submeter documento para analise")
+    doc.add_argument("--path", required=True,
+                     help="Caminho do documento (txt, md, py, ...)")
+    doc.add_argument("--profile", default="gpu-triage-v1")
+    doc.add_argument("--idempotency-key")
+
+    deps = sub.add_parser("document-deps",
+                          help="Listar dependencias sugeridas para extracao")
+
+    args = parser.parse_args()
+    database = args.root / "state.sqlite"
+
+    if args.command == "enqueue":
+        try:
+            result = enqueue(
+                database, args.prompt,
+                profile=args.profile,
+                idempotency_key=args.idempotency_key,
+            )
+        except ValueError as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+
+    if args.command == "list":
+        tasks = list_tasks(database, status=getattr(args, "status", None))
+        for t in tasks:
+            d = dict(t)
+            d.pop("prompt", None)
+            print(json.dumps(d, ensure_ascii=False))
+        return 0
+
+    if args.command == "status":
+        task = get(database, args.id)
+        if task is None:
+            print(f"Tarefa {args.id} nao encontrada", file=sys.stderr)
+            return 1
+        print(json.dumps(task, ensure_ascii=False))
+        return 0
+
+    if args.command == "cancel":
+        ok = cancel(database, args.id)
+        if ok:
+            print(f"Tarefa {args.id} cancelada")
+        else:
+            print(f"Tarefa {args.id} nao pode ser cancelada "
+                  "(inexistente ou ja processada)", file=sys.stderr)
+            return 1
+        return 0
+
+    if args.command == "reconcile":
+        return _reconcile_cmd(database, args)
+
+    if args.command == "health":
+        import socket
+        ok = True
+        for label, host, port in [
+            ("Bonsai 27B GPU", "127.0.0.1", 8080),
+            ("Bonsai 9B CPU", "127.0.0.1", 8090),
+        ]:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(3)
+            try:
+                sock.connect((host, port))
+                print(f"{label}: OK")
+            except (OSError, socket.timeout):
+                print(f"{label}: INDISPONIVEL", file=sys.stderr)
+                ok = False
+            finally:
+                sock.close()
+        if _check_service("pcsala-worker.service"):
+            print("Worker: OK")
+        else:
+            print("Worker: INDISPONIVEL", file=sys.stderr)
+            ok = False
+        return 0 if ok else 1
+
+    if args.command == "document":
+        try:
+            ext = extract_document(args.path)
+        except Exception as error:
+            print(str(error), file=sys.stderr)
+            return 1
+
+        print(f"Documento: {ext.origin}")
+        print(f"Hash: {ext.hash_sha256}")
+        print(f"Metodo: {ext.method}")
+        print(f"Tamanho: {len(ext.text)} caracteres")
+        print(f"Primeiros 200 caracteres: {ext.text[:200]!r}")
+
+        prompt = build_analysis_prompt(ext)
+        result = enqueue(
+            database, prompt,
+            profile=args.profile,
+            idempotency_key=args.idempotency_key,
+        )
+        print(f"\nEnfileirado para analise: tarefa #{result['id']}")
+        return 0
+
+    if args.command == "document-deps":
+        for dep in DEPENDENCIES_SUGGESTED:
+            print(f"{dep['package']}: {dep['purpose']}")
+            print(f"  Instalar: {dep['install_cmd']}")
+            print(f"  Extensoes: {', '.join(dep['extensions'])}")
+            print()
+        return 0
+
+    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

@@ -1,4 +1,11 @@
+import os
+
 from pydantic import BaseModel, ConfigDict, field_validator
+
+
+def _env(name, default):
+    """Override por ambiente apenas quando definido; default intacto."""
+    return os.environ.get(name, default)
 
 
 class ProfileConfig(BaseModel):
@@ -21,25 +28,36 @@ class ProfileConfig(BaseModel):
 PROFILES = {
     "cpu-triage-v1": ProfileConfig(
         profile="cpu-triage-v1",
-        endpoint="http://127.0.0.1:8090",
-        model="/home/igor/models/ternary-bonsai-2-9b-cpu/"
-        "Ternary-Bonsai-2-9B-PQ2_0.gguf",
+        endpoint=_env("PCSALA_ENDPOINT_CPU_TRIAGE_V1", "http://127.0.0.1:8090"),
+        model=_env(
+            "PCSALA_MODEL_CPU_TRIAGE_V1",
+            "/home/igor/models/ternary-bonsai-2-9b-cpu/"
+            "Ternary-Bonsai-2-9B-PQ2_0.gguf",
+        ),
         timeout_seconds=60,
         max_response_bytes=65536,
     ),
     "gpu-triage-v1": ProfileConfig(
         profile="gpu-triage-v1",
-        endpoint="http://127.0.0.1:8080",
-        model="/home/igor/models/bonsai-2-27b/"
-        "Ternary-Bonsai-2-27B-PQ2_0.gguf",
+        endpoint=_env("PCSALA_ENDPOINT_GPU_TRIAGE_V1", "http://127.0.0.1:8080"),
+        model=_env(
+            "PCSALA_MODEL_GPU_TRIAGE_V1",
+            "/home/igor/models/bonsai-2-27b/"
+            "Ternary-Bonsai-2-27B-PQ2_0.gguf",
+        ),
         timeout_seconds=60,
         max_response_bytes=65536,
     ),
     "laguna-programming-v1": ProfileConfig(
         profile="laguna-programming-v1",
-        endpoint="http://127.0.0.1:8091",
-        model="/home/igor/models/laguna-xs-2-1/"
-        "Laguna-XS-2.1-APEX-I-Compact.gguf",
+        endpoint=_env(
+            "PCSALA_ENDPOINT_LAGUNA_PROGRAMMING_V1", "http://127.0.0.1:8091"
+        ),
+        model=_env(
+            "PCSALA_MODEL_LAGUNA_PROGRAMMING_V1",
+            "/home/igor/models/laguna-xs-2-1/"
+            "Laguna-XS-2.1-APEX-I-Compact.gguf",
+        ),
         timeout_seconds=300,
         max_response_bytes=131072,
     ),
