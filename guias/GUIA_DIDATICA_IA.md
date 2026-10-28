@@ -216,6 +216,14 @@ VRAM constante a **11253 MiB** (o KV de 262144 é pré-alocado) → a
 memória aguenta o máximo; o limite é **tempo**: prefill a 262144
 estimado em 13–15 min e geração 15–25 tok/s. Recomendação: **≤32K
 interactivo**, 64–128K para ingestão de fundo.
+
+**Valor configurado:** `contextWindow: 66000` no dsh/kilocode desde
+2026-10-28 (66000 + 4096 = 70096 < 262144 do servidor). Medido a
+66755 tokens: HTTP 200, prefill **81,7 s** (56,2 tok/s), geração 56,2
+tok/s — aos 32K ainda era 73,3 tok/s e prefill 30 s. A troca custa
+**latência, não capacidade**; compacta quando
+`tokens + maxTokens > 66000` (limiar 61904 de prompt).
+
 Repetir: `python3 scripts/bench_nemotron.py` e `bench_contexto_max.py`.
 
 ---
