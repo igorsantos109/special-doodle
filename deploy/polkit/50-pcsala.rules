@@ -1,21 +1,33 @@
-# Regra polkit para unidades pc-sala-agent
-# Permite que o usuário igor (grupo igor) inicie/paro/reinicie apenas
-# as units do registro de modelos, sem precisar de senha sudo.
-#
-# Instalação:
-#   sudo install -o root -g root -m 0644 deploy/polkit/50-pcsala.rules \
-#       /etc/polkit-1/rules.d/50-pcsala.rules
-#
-# Teste manual (como igor):
-#   systemctl start bonsai2-27b.service   # deve funcionar sem senha
-#   systemctl stop bonsai2-27b.service    # deve funcionar sem senha
-#   systemctl start ssh.service           # deve NEGAR (não está na lista)
-#   systemctl start nginx.service         # deve NEGAR (não está na lista)
+// Regra polkit para unidades pc-sala-agent
+// Permite que o usuario igor (grupo igor) inicie/pare/reinicie apenas
+// as units do registro de modelos, sem precisar de senha sudo.
+//
+// ATENCAO: polkit compila este ficheiro como JavaScript — comentarios tem
+// de ser // ou /* */, nunca # (que provoca SyntaxError: invalid token
+// e faz o polkitd ignorar a regra em silencio).
+//
+// Instalacao:
+//   sudo install -o root -g root -m 0644 deploy/polkit/50-pcsala.rules \
+//       /etc/polkit-1/rules.d/50-pcsala.rules
+//   sudo systemctl restart polkit
+//
+// Teste manual (como igor):
+//   systemctl start bonsai2-27b.service   // deve funcionar sem senha
+//   systemctl stop bonsai2-27b.service    // deve funcionar sem senha
+//   systemctl start ssh.service           // deve NEGAR (nao esta na lista)
 
 polkit.addRule(function(action, subject) {
     if (subject.user != "igor") {
         return;
     }
+
+    if (action.id != "org.freedesktop.systemd1.manage-units") {
+        return;
+    }
+
+    // A unidade pedida vem em action.lookup("unit"); action.subject e' o
+    // processo (Subject), nao a unidade — usar action.subject nunca casava.
+    var unit = action.lookup("unit");
 
     var allowed_units = [
         "pcsala-worker.service",
@@ -25,10 +37,10 @@ polkit.addRule(function(action, subject) {
         "laguna.service",
         "laguna-gpu.service",
         "ornith.service",
+        "nemotron.service",
     ];
 
-    if (action.id == "org.freedesktop.systemd1.manage-units" &&
-        allowed_units.indexOf(action.subject) !== -1) {
+    if (allowed_units.indexOf(unit) !== -1) {
         return polkit.Result.YES;
     }
 });

@@ -1,0 +1,67 @@
+# nemotron.service — Ternary-Nemotron-3.5-Lightning-30B-A3B (Q2_0) na Tesla P40
+#
+# Arquitectura: nemotron_h_moe (Mamba-2 + MoE, 52 blocos, 128 experts top-6 + shared)
+# Pesos: Q2_0 ternario (~1.58-bit), 8.82 GB | embeddings/lm_head Q8_0
+# Contexto nativo: 262144 tokens | VRAM: ~8.8 GB pesos + ~6-8 GB KV q8_0
+#
+# PORTA 8083 (propria) — NAO partilha endpoint com o bonsai-27b (8080).
+# A P40 (24 GB) nao comporta os dois: modelo registado com exclusive_group
+# gpu-slot-1, igual ao bonsai-27b, para o coordinator trocar entre eles.
+#
+# BINARIO: /home/igor/opt/llama-cpp-nemotron/build/bin/llama-server
+#   cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=61 \
+#         -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc-13 \
+#         -DCMAKE_CXX_COMPILER=g++-13 -DCMAKE_CUDA_HOST_COMPILER=g++-13
+#   CUDA 12.x obrigatorio (13+ nao suporta Pascal). nvcc 12.4 rejeita gcc 15:
+#   por isso os hosts gcc-13/g++-13.
+#
+# ATIVACAO:
+#   sudo cp nemotron.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now nemotron.service
+#
+# REQUISITOS:
+#   - /home/igor/models/ternary-nemotron-3.5-30b-a3b/Ternary-Nemotron-3.5-Lightning-30B-A3B-GGUF.gguf
+#   - GPU livre (parar Bonsai antes: systemctl stop bonsai2-27b.service)
+#
+# REVERSAO:
+#   sudo systemctl disable --now nemotron.service
+#   sudo rm /etc/systemd/system/nemotron.service
+#   sudo systemctl daemon-reload
+
+[Unit]
+Description=Ternary-Nemotron-3.5-Lightning-30B-A3B Q2_0 GPU (porta 8083)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+User=igor
+Group=igor
+WorkingDirectory=/home/igor
+ExecStart=/home/igor/opt/llama-cpp-nemotron/build/bin/llama-server \
+    -m /home/igor/models/ternary-nemotron-3.5-30b-a3b/Ternary-Nemotron-3.5-Lightning-30B-A3B-GGUF.gguf \
+    --host 127.0.0.1 \
+    --port 8083 \
+    -c 262144 \
+    -np 1 \
+    -ngl 99 \
+    -fa on \
+    -ub 2048 \
+    --cache-type-k q8_0 \
+    --cache-type-v q8_0 \
+    -t 8 \
+    --no-jinja \
+    --threads-http 4
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=60s
+KillMode=control-group
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

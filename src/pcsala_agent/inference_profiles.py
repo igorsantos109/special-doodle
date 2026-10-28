@@ -61,6 +61,19 @@ PROFILES = {
         timeout_seconds=300,
         max_response_bytes=131072,
     ),
+    "nemotron-ternary-v1": ProfileConfig(
+        profile="nemotron-ternary-v1",
+        endpoint=_env(
+            "PCSALA_ENDPOINT_NEMOTRON_TERNARY_V1", "http://127.0.0.1:8083"
+        ),
+        model=_env(
+            "PCSALA_MODEL_NEMOTRON_TERNARY_V1",
+            "/home/igor/models/ternary-nemotron-3.5-30b-a3b/"
+            "Ternary-Nemotron-3.5-Lightning-30B-A3B-GGUF.gguf",
+        ),
+        timeout_seconds=300,
+        max_response_bytes=65536,
+    ),
 }
 
 

@@ -75,6 +75,14 @@ class ModelRegistry:
                 capabilities=("programacao", "triagem"),
                 health_timeout_seconds=300,
             ),
+            "nemotron-3.5-30b-gpu": ModelSpec(
+                model_id="nemotron-3.5-30b-gpu", model_class="GPU",
+                profile="nemotron-ternary-v1", unit="nemotron.service",
+                shared=False, exclusive_group="gpu-slot-1",
+                endpoint="http://127.0.0.1:8083",
+                capabilities=("leitura", "rag", "sumarizacao"),
+                health_timeout_seconds=600,
+            ),
         }
 
     def get(self, model_id):

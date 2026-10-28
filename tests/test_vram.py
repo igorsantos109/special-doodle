@@ -17,6 +17,17 @@ GPU_TWO = [
 ]
 
 
+class _SystemctlFalso:
+    """systemctl injectado nos testes: nunca toca nas units da maquina."""
+
+    def __init__(self):
+        self.chamadas = []
+
+    def __call__(self, *args):
+        self.chamadas.append(args)
+        return 0
+
+
 class TestGpuMonitor:
     def test_free_mb_injectable(self):
         mon = GpuMonitor(query_vram=lambda: GPU_FULL)
@@ -94,13 +105,23 @@ class TestModelsCLIVramGuard:
             gpus = [GpuMemory(0, "P40", 23040, 0, 100),
                     GpuMemory(1, "P40", 23040, 0, free_mb)]
         mon = GpuMonitor(query_vram=lambda: gpus, gpu_index=gpu_index)
-        return ModelsCLI(
+        cli = ModelsCLI(
             registry=reg,
             db_path=str(db_path),
             gpu_monitor=mon,
             lock_dir=tmp_path / "locks",
             skip_vram_guard=skip_guard,
+            systemctl=_SystemctlFalso(),
         )
+        # Hermetico: estes testes validam os limiares da guarda de VRAM.
+        # Com a polkit instalada, o systemctl real pararia as units da
+        # maquina de teste, e _is_model_running / wait_for_health dependem
+        # de modelos realmente a correr e de /health reais.
+        cli._is_model_running = lambda model_id: False
+        cli.coordinator.wait_for_health = (
+            lambda model_id, timeout=None: True
+        )
+        return cli
 
     def test_start_recusa_com_menos_de_1_5gb(self, tmp_path):
         cli = self._cli(500, tmp_path)
