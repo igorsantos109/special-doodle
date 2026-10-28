@@ -2,8 +2,11 @@ import pytest
 from pydantic import ValidationError
 
 from pcsala_agent.execution_contract import (
-    ExecutionRequest, ExecutionResult, resolve_profile,
+    ExecutionRequest,
+    ExecutionResult,
+    resolve_profile,
 )
+
 
 def payload():
     return {

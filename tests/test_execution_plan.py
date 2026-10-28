@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from pcsala_agent.execution_contract import ExecutionRequest, resolve_profile
 from pcsala_agent.execution_plan import build_execution_plan
 
+
 def request(**changes):
     data = dict(
         project_id="p1", session_id="s1", task_id="t1",

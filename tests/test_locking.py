@@ -1,10 +1,9 @@
-import os
 import subprocess
 import sys
 
 import pytest
 
-from pcsala_agent.locking import ExecutorBusy, database_lock
+from pcsala_agent.locking import database_lock
 
 CHILD = """
 import sys
@@ -35,9 +34,8 @@ def test_impede_segundo_processo(tmp_path):
 
 def test_libera_apos_excecao(tmp_path):
     database = tmp_path / "state.sqlite"
-    with pytest.raises(ValueError):
-        with database_lock(database):
-            raise ValueError("falha simulada")
+    with pytest.raises(ValueError), database_lock(database):
+        raise ValueError("falha simulada")
     with database_lock(database):
         pass
 
@@ -69,7 +67,6 @@ def test_recusa_lock_simbolico(tmp_path):
     target.write_text("preservar")
     lock = tmp_path / "state.sqlite.lock"
     lock.symlink_to(target)
-    with pytest.raises(OSError):
-        with database_lock(database):
-            pass
+    with pytest.raises(OSError), database_lock(database):
+        pass
     assert target.read_text() == "preservar"

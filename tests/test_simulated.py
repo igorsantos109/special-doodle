@@ -5,6 +5,7 @@ import sys
 
 from pcsala_agent.locking import database_lock
 
+
 def cli(root, command, session="s"):
     return subprocess.run(
         [

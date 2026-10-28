@@ -2,6 +2,7 @@ import pytest
 
 from pcsala_agent.output_probe import run_output_probe
 
+
 def test_success_and_streams():
     result = run_output_probe("success", timeout_seconds=5)
     assert result.status == "SUCCESS"

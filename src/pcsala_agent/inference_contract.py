@@ -1,74 +1,45 @@
-from __future__ import annotations
-
-import re
-from typing import Literal
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
-class ContractModel(BaseModel):
-    model_config = ConfigDict(
-        strict=True,
-        extra="forbid",
-        frozen=True,
-        validate_default=True,
-        revalidate_instances="always",
-    )
+class InferenceConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    endpoint: str = "http://127.0.0.1:8090"
+    model: str = ""
+    timeout_seconds: int = 60
+    max_response_bytes: int = 65536
+    api_key_env: str = "DSH_LOCAL_API_KEY"
+
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint(cls, v):
+        # A aplicacao da regra de endpoint local/HTTP ocorre no adaptador,
+        # no momento da consulta (InferenceAdapter._validate_endpoint).
+        return v
 
 
-class InferenceRequest(ContractModel):
-    version: Literal["1"] = "1"
+class InferenceRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
     project_id: str
     session_id: str
     task_id: str
     attempt_id: str
-    profile: Literal["cpu-triage-v1", "gpu-triage-v1", "laguna-programming-v1"]
+    profile: str
+    user_prompt: str
     system_prompt: str = ""
-    user_prompt: str = ""
+    timeout_seconds: int = 60
 
-    @field_validator("project_id", "session_id", "task_id", "attempt_id")
+    @field_validator("profile")
     @classmethod
-    def identifier(cls, value):
-        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", value) is None:
-            raise ValueError("Identificador ASCII invalido; tamanho de 1 a 64")
-        return value
+    def validate_profile(cls, v):
+        from .inference_profiles import get_profile
+        get_profile(v)
+        return v
 
 
-InferenceStatus = Literal[
-    "SUCCESS",
-    "UNAVAILABLE",
-    "TIMEOUT",
-    "INVALID_RESPONSE",
-]
-
-
-class InferenceResponse(ContractModel):
-    version: Literal["1"] = "1"
+class InferenceResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
     request: InferenceRequest
-    status: InferenceStatus
+    status: str
     text: str = ""
     model: str = ""
-    output_bytes: int = Field(ge=0, le=16777216)
-
-
-class InferenceConfig:
-    endpoint: str
-    model: str
-    timeout_seconds: int
-    max_response_bytes: int
-    api_key_env: str
-
-    def __init__(
-        self,
-        *,
-        endpoint: str = "http://127.0.0.1:8080",
-        model: str = "",
-        timeout_seconds: int = 60,
-        max_response_bytes: int = 65536,
-        api_key_env: str = "",
-    ):
-        self.endpoint = endpoint
-        self.model = model
-        self.timeout_seconds = timeout_seconds
-        self.max_response_bytes = max_response_bytes
-        self.api_key_env = api_key_env
+    output_bytes: int = 0

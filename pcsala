@@ -11,7 +11,7 @@ Uso:
   pcsala reconcile
   pcsala health
   pcsala backup
-  pcsala exec-demo
+  pcsala models {list,status,health,start,stop,switch,vram,operation}
 """
 import argparse
 import os
@@ -24,10 +24,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 VENV_PYTHON = HERE / ".venv" / "bin" / "python"
 SRC_DIR = HERE / "src"
-BACKUP_DIR = Path(
-    os.environ.get("PCSALA_BACKUP_DIR", "/home/igor/.config/pcsala-bonsai")
-)
+PCSALA_HOME = Path(os.environ.get("PCSALA_HOME", Path.home()))
 WORKER_ROOT = Path(os.environ.get("PCSALA_ROOT", "/var/lib/pcsala-worker"))
+BACKUP_DIR = Path(os.environ.get(
+    "PCSALA_BACKUP_DIR", str(PCSALA_HOME / ".config" / "pcsala-bonsai")))
 
 
 def main():
@@ -64,8 +64,6 @@ def main():
     sub.add_parser("health", help="Verificar servicos")
 
     sub.add_parser("backup", help="Criar backup completo")
-
-    sub.add_parser("exec-demo", help="Demonstrar executor integrado")
 
     models = sub.add_parser("models", help="Gestao de modelos")
     models_sub = models.add_subparsers(dest="models_command", required=True)
@@ -146,10 +144,6 @@ def main():
         _do_backup(args.root)
         return
 
-    if args.command == "exec-demo":
-        _run_script("/tmp/demo_executor_integrado.py")
-        return
-
     if args.command == "models":
         model_args = ["--root", str(args.root), args.models_command]
         if args.models_command in ("status", "health", "start", "stop", "switch"):
@@ -165,11 +159,6 @@ def _run_module(module, args):
     env["PYTHONPATH"] = f"{SRC_DIR}:{env.get('PYTHONPATH', '')}"
     cmd = [str(VENV_PYTHON), "-m", module, *args]
     result = subprocess.run(cmd, capture_output=False, env=env)
-    sys.exit(result.returncode)
-
-
-def _run_script(path):
-    result = subprocess.run([sys.executable, path], capture_output=False)
     sys.exit(result.returncode)
 
 

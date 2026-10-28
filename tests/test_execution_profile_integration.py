@@ -5,11 +5,13 @@ import pytest
 
 from pcsala_agent.database import connect
 from pcsala_agent.execution_acceptance import (
-    ExecutionAlreadyAccepted, accept_execution,
+    ExecutionAlreadyAccepted,
+    accept_execution,
 )
 from pcsala_agent.execution_contract import ExecutionRequest
 from pcsala_agent.execution_eligibility import (
-    ExecutionNotEligible, check_execution_eligibility,
+    ExecutionNotEligible,
+    check_execution_eligibility,
 )
 from pcsala_agent.execution_plan import build_execution_plan
 from pcsala_agent.migrations import migrate

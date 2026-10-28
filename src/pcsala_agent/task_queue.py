@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -172,7 +173,12 @@ def cancel(database, task_id):
 
 
 def reconcile(database, task_id, *, graph_root, graph_attempt_id):
-    """Reconcilia resultado do grafo confirmado na fila sem re-inferir."""
+    """Reconcilia resultado do grafo confirmado na fila sem re-inferir.
+
+    Adaptado ao formato de artefacto da 1.1: o passo terminal e' "concluir"
+    (a producao usa "concluido") e o modelo vem na chave "model"
+    (a producao usa "inference_model").
+    """
     from .checkpoints import CheckpointStore
     from .database import connect as db_connect
 
@@ -194,14 +200,18 @@ def reconcile(database, task_id, *, graph_root, graph_attempt_id):
         artifact = json.loads(
             (store.root / artifact_row["relative_path"]).read_bytes()
         )
-        if artifact.get("step") not in ("concluido", "falha"):
+        if artifact.get("step") != "concluir":
             return False
+        scope = ("default", task_session, graph_task_id, graph_attempt_id)
+        inference_id = artifact.get("inference_id") or hashlib.sha256(
+            json.dumps(scope, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
         update(
             database, task_id,
             inference_response=artifact.get("inference_response", ""),
-            inference_id=artifact.get("inference_id", ""),
-            inference_model=artifact.get("inference_model", ""),
-            inference_status=artifact.get("inference_status", ""),
+            inference_id=inference_id,
+            inference_model=artifact.get("model", ""),
+            inference_status=artifact.get("inference_status", "SUCCESS"),
             error=artifact.get("error", ""),
         )
         return True

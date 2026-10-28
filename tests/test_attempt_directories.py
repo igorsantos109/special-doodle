@@ -5,10 +5,14 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from pcsala_agent.execution_contract import ExecutionRequest
 from pcsala_agent.attempt_directories import (
-    FLAGS, AttemptAlreadyExists, DirectoryPreparationError, prepare_attempt,
+    FLAGS,
+    AttemptAlreadyExists,
+    DirectoryPreparationError,
+    prepare_attempt,
 )
+from pcsala_agent.execution_contract import ExecutionRequest
+
 
 def request():
     return ExecutionRequest(

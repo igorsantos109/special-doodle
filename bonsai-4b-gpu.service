@@ -1,0 +1,39 @@
+[Unit]
+Description=Bonsai 4B GPU residente (porta 8093) - nao habilitado no boot
+Wants=network-online.target
+After=network-online.target bonsai2-27b.service
+
+[Service]
+Type=exec
+User=igor
+Group=igor
+WorkingDirectory=/home/igor
+Environment=LD_LIBRARY_PATH=/home/igor/opt/prism-pascal-build/install/lib
+# ATENCAO: substituir pelo caminho real do GGUF de 4B antes de iniciar.
+StateDirectory=pcsala-worker
+ExecStartPre=/usr/bin/install -d -m 0700 /var/lib/pcsala-worker/slots
+ExecStart=/home/igor/opt/prism-pascal-build/install/bin/llama-server \
+    -m /home/igor/models/bonsai-4b/Ternary-Bonsai-2-4B-Q4_K_M.gguf \
+    --host 127.0.0.1 \
+    --port 8093 \
+    -c 64000 \
+    -t 8 \
+    -ngl 99 \
+    --flash-attn on \
+    -n 2048 \
+    --parallel 1 \
+    --no-jinja \
+    --threads-http 4 \
+    --slot-save-path /var/lib/pcsala-worker/slots
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=60s
+KillMode=control-group
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+UMask=0077
+
+# Nao habilitado no boot: iniciar manualmente quando necessario.
+# sudo systemctl enable --now bonsai-4b-gpu.service  (nao fazer)

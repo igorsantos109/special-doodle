@@ -4,11 +4,20 @@ Regras desta suíte, verificadas em cada teste:
   * raiz de dados descartável sob o directório temporário do teste;
   * banco, artefactos e locks próprios (nunca /var/lib/pcsala-worker);
   * servidor HTTP falso numa porta livre 127.0.0.1;
-  * `systemctl` falso em PATH que apenas regista as chamadas;
   * todos os executores em subprocesso (CLI real e worker real);
   * encerra apenas processos iniciados por esta suíte (SIGTERM dirigido).
 
 Nenhum teste escreve em produção, reinicia serviços ou usa GPU.
+
+Adaptada desta versão da 1.1 (substituições mínimas, documentadas):
+  * `PCSALA_ENDPOINT_*` é obrigatório para o worker usar o servidor falso —
+    a 1.1 lê estas variáveis com default intacto;
+  * o health check da 1.1 é por URL (`GET /health`), não via systemd, por
+    isso não há chamadas a `systemctl` a registar e a secção f) só verifica
+    que a produção não é perturbada;
+  * indisponibilidade do servidor traduz `inference_status="UNAVAILABLE"`
+    (1.1) em vez de vazio (produção) — o invariante testado é não concluir
+    com resposta falsa.
 """
 
 from __future__ import annotations
@@ -374,7 +383,7 @@ def test_servidor_indisponivel_sem_conclusao_falsa(tmp_path):
 
         assert estado["status"] == "FAILED", estado
         assert estado["inference_response"] in ("", None), estado
-        assert estado["inference_status"] in ("", None), estado
+        assert estado["inference_status"] == "UNAVAILABLE", estado
         assert estado["error"], "erro deveria ficar registado"
         assert amb.stats()["completions"] == 0
         amb.encerrar_workers()
@@ -503,11 +512,11 @@ def test_encerramento_do_trabalhador_de_teste_nao_afecta_producao(tmp_path):
         assert pid_worker_producao() == pid_antes, "worker de produção mudou"
 
         chamadas = amb.chamadas_systemctl()
-        assert chamadas, "sem chamadas registadas"
         for linha in chamadas:
             assert linha == f"is-active {UNIDADE_TESTE}", chamadas
         assert PROD_ROOT not in " ".join(chamadas)
         assert amb.root.exists() and amb.root != PROD_ROOT
+        assert str(amb.root).startswith(str(amb.dir)), amb.root
     finally:
         amb.parar_servidor()
         amb.encerrar_workers()

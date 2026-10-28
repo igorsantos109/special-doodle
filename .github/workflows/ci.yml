@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main, fase-0]
+  pull_request:
+    branches: [main, fase-0]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip pip-tools ruff
+          pip-compile --generate-hashes requirements.in -o requirements.lock
+          pip install -r requirements.lock
+
+      - name: Verificar que requirements.lock está sincronizado
+        run: |
+          if ! git diff --quiet requirements.lock; then
+            echo "::error::requirements.lock está desatualizado. Rode pip-compile --generate-hashes requirements.in -o requirements.lock"
+            git diff requirements.lock
+            exit 1
+          fi
+
+      - name: Executar ruff
+        run: ruff check src tests
+
+      - name: Executar testes (excluindo GPU)
+        run: PYTHONPATH=src python -m pytest -q -m "not gpu" tests

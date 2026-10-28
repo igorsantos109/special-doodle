@@ -3,10 +3,11 @@ import pytest
 from pcsala_agent.checkpoints import RecoveryRequired
 from pcsala_agent.controlled import run_unit
 from pcsala_agent.database import connect
-from pcsala_agent.locking import database_lock, ExecutorBusy
+from pcsala_agent.locking import ExecutorBusy, database_lock
 from pcsala_agent.migrations import migrate
-from pcsala_agent.sessions import SessionController, SessionConflict
+from pcsala_agent.sessions import SessionConflict, SessionController
 from pcsala_agent.shutdown import ShutdownController
+
 
 @pytest.fixture
 def environment(tmp_path):
@@ -88,11 +89,10 @@ def test_executor_vivo_impede_preparacao(environment):
     root, cid = environment
     controller = ShutdownController(root)
     request = controller.request("s", current(root)["revision"])
-    with database_lock(root / "executor-owner"):
-        with pytest.raises(ExecutorBusy):
-            controller.prepare(
-                "s", request["revision"], request["request_id"], cid
-            )
+    with database_lock(root / "executor-owner"), pytest.raises(ExecutorBusy):
+        controller.prepare(
+            "s", request["revision"], request["request_id"], cid
+        )
     assert current(root)["state"] == "DRAINING"
 
 def test_revisao_antiga_nao_encerra(environment):

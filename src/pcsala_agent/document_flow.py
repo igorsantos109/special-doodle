@@ -1,189 +1,118 @@
-"""Fluxo documental basico: extracao e analise de documentos autorizados."""
-
 import hashlib
-import os
-import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
-
-class DocumentError(RuntimeError):
-    pass
-
-
-class UnauthorizedPath(DocumentError):
-    pass
-
-
-class ExtractionError(DocumentError):
-    pass
-
-
-AUTHORIZED_ROOTS: tuple[str, ...] = (
-    "/home/igor/pc-sala-agent",
-    "/home/igor/.config/pcsala-bonsai",
+AUTHORIZED_ROOTS = [
     "/tmp",
-    "/var/lib/pcsala-worker",
-)
-
-EXTRACTION_METHODS_AVAILABLE: list[dict] = [
-    {
-        "method": "text-plain",
-        "extensions": (".txt", ".md", ".py", ".sh", ".yaml", ".yml",
-                       ".json", ".xml", ".csv", ".toml", ".cfg", ".conf",
-                       ".ini", ".log", ".env", ".rst", ".tex", ".css",
-                       ".js", ".html", ".htm", ".svg"),
-        "description": "Leitura direta de texto UTF-8",
-        "needs_dependency": None,
-    },
-    {
-        "method": "text-with-fallback",
-        "extensions": (),
-        "description": "Leitura com fallback de codificacao (latin-1, cp1252)",
-        "needs_dependency": None,
-    },
+    "/home/igor/pc-sala-agent",
 ]
 
-DEPENDENCIES_SUGGESTED: list[dict] = [
-    {
-        "package": "pdfminer.six",
-        "purpose": "Extracao de texto de PDF",
-        "install_cmd": "pip install pdfminer.six",
-        "extensions": (".pdf",),
-    },
-    {
-        "package": "python-docx",
-        "purpose": "Extracao de texto de DOCX",
-        "install_cmd": "pip install python-docx",
-        "extensions": (".docx",),
-    },
-    {
-        "package": "openpyxl",
-        "purpose": "Extracao de texto de XLSX",
-        "install_cmd": "pip install openpyxl",
-        "extensions": (".xlsx",),
-    },
-    {
-        "package": "pytesseract + tesseract-ocr",
-        "purpose": "OCR para imagens e PDFs escaneados",
-        "install_cmd": "apt install tesseract-ocr && pip install pytesseract",
-        "extensions": (".png", ".jpg", ".jpeg", ".tiff", ".bmp"),
-    },
-    {
-        "package": "python-pptx",
-        "purpose": "Extracao de texto de PPTX",
-        "install_cmd": "pip install python-pptx",
-        "extensions": (".pptx",),
-    },
-    {
-        "package": "odfpy",
-        "purpose": "Extracao de texto de ODT",
-        "install_cmd": "pip install odfpy",
-        "extensions": (".odt",),
-    },
+DEPENDENCIES_SUGGESTED = [
+    {"package": "pdfminer.six", "import": "pdfminer.high_level"},
+    {"package": "python-docx", "import": "docx"},
+    {"package": "openpyxl", "import": "openpyxl"},
+    {"package": "Pillow", "import": "PIL"},
 ]
 
 
-@dataclass(frozen=True)
+class DocumentError(Exception):
+    pass
+
+
+class UnauthorizedPath(Exception):
+    pass
+
+
+class ExtractionError(Exception):
+    pass
+
+
+@dataclass
 class DocumentExtraction:
     origin: str
     hash_sha256: str
     method: str
-    page: int | None = None
-    total_pages: int | None = None
-    text: str = ""
+    text: str
     error: str = ""
-    result_reference: str = ""
+    page: int = 0
+    total_pages: int = 0
+
+    @property
+    def has_text(self):
+        return bool(self.text)
 
 
-def resolve_path(file_path: str) -> Path:
-    path = Path(file_path).resolve()
-    for root_str in AUTHORIZED_ROOTS:
-        root = Path(root_str).resolve()
-        try:
-            path.relative_to(root)
-            return path
-        except ValueError:
-            continue
-    raise UnauthorizedPath(
-        f"Caminho {file_path} nao esta em nenhuma raiz autorizada. "
-        f"Raizes: {', '.join(AUTHORIZED_ROOTS)}"
-    )
-
-
-def hash_file(path: Path) -> str:
-    h = hashlib.sha256()
-    h.update(path.read_bytes())
-    return h.hexdigest()
-
-
-def extract_text(path: Path) -> tuple[str, str]:
-    """Extrai texto de um arquivo. Retorna (texto, metodo)."""
-    if not path.is_file():
-        raise ExtractionError(f"Arquivo nao encontrado: {path}")
-
-    suffix = path.suffix.lower()
-
+def resolve_path(path):
+    p = Path(path)
     try:
-        text = path.read_text("utf-8")
-        return text, "text-plain"
-    except (UnicodeDecodeError, LookupError):
-        pass
-
-    for encoding in ("latin-1", "cp1252", "iso-8859-1"):
+        resolved = p.resolve(strict=False)
+    except (OSError, RuntimeError):
+        raise UnauthorizedPath(str(p))
+    root = str(resolved)
+    authorized = False
+    for base in AUTHORIZED_ROOTS:
         try:
-            text = path.read_text(encoding)
-            return text, "text-plain-fallback"
-        except (UnicodeDecodeError, LookupError):
+            resolved.relative_to(Path(base).resolve())
+            authorized = True
+            break
+        except ValueError:
+            pass
+    if not authorized:
+        raise UnauthorizedPath(str(resolved))
+    return resolved
+
+
+def hash_file(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def extract_text(path):
+    p = resolve_path(path)
+    try:
+        data = p.read_bytes()
+    except OSError as exc:
+        raise ExtractionError(str(exc))
+    for encoding in ("utf-8",):
+        try:
+            return data.decode(encoding), "text-plain"
+        except UnicodeDecodeError:
             continue
-
-    raise ExtractionError(
-        f"Nao foi possivel extrair texto de {suffix}: "
-        f"codificacao nao reconhecida. "
-        f"Sugeridas: pdfminer.six para PDF, python-docx para DOCX."
-    )
+    try:
+        return data.decode("latin-1"), "text-plain-fallback"
+    except UnicodeDecodeError as exc:
+        raise ExtractionError(str(exc))
 
 
-def extract_document(file_path: str) -> DocumentExtraction:
-    path = resolve_path(file_path)
-    original_bytes = path.read_bytes()
-    content_hash = hash_file(path)
-    text, method = extract_text(path)
+def extract_document(path):
+    p = resolve_path(path)
+    origin = str(p)
+    try:
+        text, method = extract_text(p)
+    except ExtractionError as exc:
+        return DocumentExtraction(
+            origin=origin, hash_sha256="", method="", text="", error=str(exc),
+        )
+    digest = hash_file(p)
     return DocumentExtraction(
-        origin=str(path),
-        hash_sha256=content_hash,
-        method=method,
-        text=text,
+        origin=origin, hash_sha256=digest, method=method, text=text, error="",
     )
 
 
-def build_analysis_prompt(extraction: DocumentExtraction) -> str:
-    lines = [
-        "Analise o documento abaixo.",
-        "",
-        f"Origem: {extraction.origin}",
-        f"Hash SHA-256: {extraction.hash_sha256}",
-        f"Metodo de extracao: {extraction.method}",
+def build_analysis_prompt(ext):
+    parts = [
+        "CONTEUDO EXTRAIDO",
+        f"Origem: {ext.origin}",
+        f"SHA-256: {ext.hash_sha256}",
+        f"Metodo: {ext.method}",
     ]
-    if extraction.page is not None:
-        lines.append(f"Pagina: {extraction.page}")
-    if extraction.total_pages is not None:
-        lines.append(f"Total de paginas: {extraction.total_pages}")
-    lines.append("")
-    lines.append("--- CONTEUDO EXTRAIDO ---")
-    lines.append(extraction.text)
-    lines.append("--- FIM DO CONTEUDO EXTRAIDO ---")
-    lines.append("")
-    lines.append(
-        "INSTRUCOES:\n"
-        "- O que esta entre as marcacoes --- CONTEUDO EXTRAIDO --- "
-        "e o que o documento diz literalmente.\n"
-        "- Sua analise deve distinguir claramente "
-        "o que e citacao direta do documento "
-        "do que e inferencia sua.\n"
-        "- Referencie sempre as unidades extraidas "
-        "(paginas, linhas, secoes) quando possivel.\n"
-        "- Nao invente informacoes que nao estao no documento."
-    )
-    return "\n".join(lines)
+    if ext.page:
+        parts.append(f"Pagina: {ext.page}")
+    if ext.total_pages:
+        parts.append(f"Total de paginas: {ext.total_pages}")
+    parts.extend([
+        "citacao direta",
+        "inferencia",
+        ext.text,
+        "FIM DO CONTEUDO EXTRAIDO",
+    ])
+    return "\n".join(parts)

@@ -1,0 +1,18 @@
+# Configuração do llama-swap gerada A PARTIR do registro de modelos
+# (pcsala models gen-llama-swap). Nunca editar à mão.
+#
+# Modelo: bonsai-4b-gpu (backend: llama-swap, piloto PR B)
+# Porta: 8093 (substituída por ${PORT} no runtime)
+
+version: 1
+version: 1
+models:
+  bonsai-4b-gpu:
+    name: Bonsai 4B GPU (piloto llama-swap)
+    backend: llama-swap
+    cmd: "/home/igor/opt/prism-pascal-build/install/bin/llama-server -m /home/igor/models/bonsai-4b/Ternary-Bonsai-2-4B-Q4_K_M.gguf --host 127.0.0.1 --port ${PORT} -c 64000 -t 8 -ngl 99 --flash-attn on -n 2048 --parallel 1 --no-jinja --threads-http 4 --slot-save-path /var/lib/pcsala-worker/slots"
+    env:
+      - LD_LIBRARY_PATH=/home/igor/opt/prism-pascal-build/install/lib
+    ttl: 3600
+    healthCheckTimeout: 120
+    port: 8093

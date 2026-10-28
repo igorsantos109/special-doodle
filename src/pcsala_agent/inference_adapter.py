@@ -1,194 +1,92 @@
-from __future__ import annotations
-
 import json
-import logging
-import os
 import urllib.error
-import urllib.request
-from collections.abc import Callable
-from typing import Any
 from urllib.parse import urlparse
 
-from .inference_contract import (
-    InferenceConfig,
-    InferenceRequest,
-    InferenceResponse,
-)
-
-logger = logging.getLogger(__name__)
+from .inference_contract import InferenceResponse
 
 
-class InferenceEndpointError(ValueError):
+class InferenceEndpointError(Exception):
     pass
-
-
-class InferenceTransportError(RuntimeError):
-    pass
-
-
-def _build_chat_completion_body(
-    request: InferenceRequest,
-    config: InferenceConfig,
-) -> bytes:
-    messages = []
-    if request.system_prompt:
-        messages.append({"role": "system", "content": request.system_prompt})
-    messages.append({"role": "user", "content": request.user_prompt})
-
-    body = {
-        "model": config.model,
-        "messages": messages,
-        "stream": False,
-        "max_tokens": 16384,
-    }
-    return json.dumps(body, ensure_ascii=False).encode("utf-8")
-
-
-def _validate_endpoint(endpoint: str) -> str:
-    parsed = urlparse(endpoint)
-    host = parsed.hostname or ""
-    if host not in ("127.0.0.1", "localhost", "::1"):
-        raise InferenceEndpointError(
-            f"Endpoint rejeitado: {endpoint}. Somente loopback permitido."
-        )
-    if parsed.scheme not in ("http",):
-        raise InferenceEndpointError(
-            f"Esquema rejeitado: {parsed.scheme}. Somente http."
-        )
-    return endpoint
 
 
 class InferenceAdapter:
-    def __init__(
-        self,
-        config: InferenceConfig,
-    ):
-        self.config = config
+    def __init__(self, config=None):
+        from .inference_contract import InferenceConfig
+        self.config = config or InferenceConfig()
 
-    def query(
-        self,
-        request: InferenceRequest,
-        *,
-        _urlopen: Callable[..., Any] | None = None,
-    ) -> InferenceResponse:
-        _validate_endpoint(self.config.endpoint)
+    def _validate_endpoint(self):
+        endpoint = self.config.endpoint
+        parsed = urlparse(endpoint)
+        host = parsed.hostname or ""
+        if not (host == "127.0.0.1" or host == "localhost"):
+            raise InferenceEndpointError(f"endpoint não local: {endpoint}")
+        if parsed.scheme != "http":
+            raise InferenceEndpointError(f"schema não http: {endpoint}")
+
+    def query(self, request, _urlopen=None):
+        import urllib.request as _urlreq
+        if _urlopen is None:
+            _urlopen = _urlrequest
+        self._validate_endpoint()
         url = self.config.endpoint.rstrip("/") + "/v1/chat/completions"
-        data = _build_chat_completion_body(request, self.config)
-
-        opener = _urlopen if _urlopen is not None else urllib.request.urlopen
-        headers = {"Content-Type": "application/json"}
-        if self.config.api_key_env:
-            key = os.environ.get(self.config.api_key_env, "")
-            if key:
-                headers["Authorization"] = "Bearer " + key
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers=headers,
-            method="POST",
-        )
-
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.user_prompt})
+        payload = {"model": self.config.model or request.profile, "messages": messages}
+        data = json.dumps(payload).encode("utf-8")
+        req = _urlreq.Request(url, data=data, headers={"Content-Type": "application/json"},
+                              method="POST")
         try:
-            response = opener(
-                req, timeout=self.config.timeout_seconds
-            )
-        except urllib.error.HTTPError as exc:
-            status = exc.code
-            try:
-                detail = exc.read(self.config.max_response_bytes)
-            except Exception:
-                detail = b""
-            logger.warning(
-                "Inferencia HTTP %s para %s", status, request.attempt_id
-            )
+            resp = _urlopen(req)
+        except urllib.error.HTTPError:
             return InferenceResponse(
-                request=request,
-                status="UNAVAILABLE",
-                output_bytes=len(detail),
+                request=request, status="UNAVAILABLE", text=""
             )
-        except urllib.error.URLError as exc:
-            logger.warning(
-                "Inferencia indisponivel para %s: %s",
-                request.attempt_id,
-                exc.reason,
-            )
+        except urllib.error.URLError:
             return InferenceResponse(
-                request=request,
-                status="UNAVAILABLE",
-                output_bytes=0,
+                request=request, status="UNAVAILABLE", text=""
             )
-
-        except TimeoutError as exc:
-            logger.warning(
-                "Inferencia timeout para %s", request.attempt_id
-            )
+        except TimeoutError:
             return InferenceResponse(
-                request=request,
-                status="TIMEOUT",
-                output_bytes=0,
+                request=request, status="TIMEOUT", text=""
             )
-
+        body = resp.read()
+        if len(body) > self.config.max_response_bytes:
+            return InferenceResponse(
+                request=request, status="INVALID_RESPONSE", text=""
+            )
         try:
-            raw = response.read(self.config.max_response_bytes + 1)
-        except Exception as exc:
-            logger.error("Erro na leitura da resposta: %s", exc)
+            parsed = json.loads(body)
+        except (ValueError, UnicodeDecodeError):
             return InferenceResponse(
-                request=request, status="INVALID_RESPONSE"
+                request=request, status="INVALID_RESPONSE", text=""
             )
-
-        if len(raw) > self.config.max_response_bytes:
-            logger.warning("Resposta excede %s bytes", self.config.max_response_bytes)
+        if not isinstance(parsed, dict) or "choices" not in parsed:
             return InferenceResponse(
-                request=request,
-                status="INVALID_RESPONSE",
-                output_bytes=self.config.max_response_bytes + 1,
+                request=request, status="INVALID_RESPONSE", text=""
             )
-
-        try:
-            payload = json.loads(raw)
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            logger.warning("JSON invalido na resposta: %s", exc)
+        choice = parsed["choices"][0]
+        message = choice.get("message", {})
+        content = message.get("content")
+        finish = choice.get("finish_reason")
+        if not isinstance(content, str):
             return InferenceResponse(
-                request=request,
-                status="INVALID_RESPONSE",
-                output_bytes=len(raw),
+                request=request, status="INVALID_RESPONSE", text=""
             )
-
-        try:
-            text = payload["choices"][0]["message"]["content"]
-            model = payload.get("model", self.config.model)
-        except (KeyError, IndexError, TypeError) as exc:
-            logger.warning("Estrutura inesperada na resposta: %s", exc)
+        if finish == "tool_calls":
             return InferenceResponse(
-                request=request,
-                status="INVALID_RESPONSE",
-                output_bytes=len(raw),
+                request=request, status="INVALID_RESPONSE", text=""
             )
-
-        if not isinstance(text, str):
-            logger.warning("Conteudo da mensagem nao e texto")
-            return InferenceResponse(
-                request=request,
-                status="INVALID_RESPONSE",
-                output_bytes=len(raw),
-            )
-
-        # Nao executar tool_calls ou comandos contidos na resposta
-        if "tool_calls" in payload or any(
-            choice.get("finish_reason") == "tool_calls"
-            for choice in payload.get("choices", [])
-        ):
-            logger.warning("Resposta contem tool_calls — ignorada")
-            return InferenceResponse(
-                request=request,
-                status="INVALID_RESPONSE",
-                output_bytes=len(raw),
-            )
-
         return InferenceResponse(
             request=request,
             status="SUCCESS",
-            text=text,
-            model=model,
-            output_bytes=len(raw),
+            text=content,
+            model=parsed.get("model", ""),
+            output_bytes=len(body),
         )
+
+
+def _urlrequest(request, *args, **kwargs):
+    import urllib.request
+    return urllib.request.urlopen(request)

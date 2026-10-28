@@ -1,159 +1,163 @@
+import dataclasses
 import hashlib
-import json
-from dataclasses import dataclass, replace
-from pathlib import PurePosixPath
-from typing import Literal
 
-from .execution_contract import ExecutionRequest, resolve_profile
+from .execution_contract import resolve_profile
 
-ROOT = PurePosixPath("/var/lib/pcsala-executor/jobs")
 
-@dataclass(frozen=True)
-class StorageMount:
+@dataclasses.dataclass(frozen=True)
+class ExecutionPlan:
+    request_profile: str
+    workspace: str
+    unit: str
+    argv: tuple
+    sandbox_argv: tuple = ()
+    shell: bool = False
+    storage_strategy: str = "legacy-persistent-bind"
+    storage_mounts: tuple = ()
+    mount_namespace: str = "default"
+    payload_user: str = "pcsala-executor"
+    resource_properties: tuple = ()
+    privileged_preparation_required: bool = False
+    executable: bool = True
+    output_bytes_max: int = 65536
+    workspace_bytes_max: int = 16777216
+    client_environment: dict = dataclasses.field(default_factory=dict)
+
+    def require_executable(self):
+        return self
+
+
+_RESOURCE_PROPS = (
+    "User=pcsala-executor", "Group=pcsala-executor",
+    "MemoryMax=268435456", "MemorySwapMax=0",
+    "TasksMax=32", "CPUQuota=50%", "RuntimeMaxSec=15s",
+    "TimeoutStopSec=2s", "KillMode=control-group",
+    "OOMPolicy=kill", "NoNewPrivileges=yes", "WorkingDirectory=/",
+)
+_RESOURCE_PROPERTIES = tuple(f"--property={p}" for p in _RESOURCE_PROPS)
+
+_NAMESPACE_OPTIONS = (
+    "--unshare-user", "--unshare-net", "--unshare-pid",
+    "--unshare-ipc", "--unshare-uts",
+    "--die-with-parent", "--new-session", "--clearenv",
+)
+
+
+def _workspace_path(request):
+    return (
+        f"/var/lib/pcsala-executor/jobs/"
+        f"{request.project_id}/{request.session_id}/{request.task_id}/"
+        f"{request.attempt_id}/workspace"
+    )
+
+
+def _unit(request, profile):
+    digest = hashlib.sha256(
+        f"{request.project_id}/{request.session_id}/{request.task_id}/"
+        f"{request.attempt_id}/{profile.name}".encode()
+    ).hexdigest()[:12]
+    return f"pcsala-exec-{digest}.service"
+
+
+def _v1_argv(workspace, profile):
+    argv = ["/usr/bin/systemd-run"]
+    argv.extend(_RESOURCE_PROPERTIES)
+    argv.extend(_NAMESPACE_OPTIONS)
+    argv.extend(["--ro-bind", "/usr", "/usr"])
+    argv.extend(["--ro-bind", "/lib", "/lib"])
+    argv.extend(["--ro-bind", "/lib64", "/lib64"])
+    argv.extend(["--bind", workspace, "/workspace"])
+    argv.append("--")
+    argv.extend(profile.argv)
+    return tuple(argv)
+
+
+def _v2_sandbox_argv(workspace, tmp_dir, profile):
+    argv = ["/usr/bin/bwrap"]
+    argv.extend(_NAMESPACE_OPTIONS)
+    argv.extend(["--ro-bind", "/usr", "/usr"])
+    argv.extend(["--ro-bind", "/lib", "/lib"])
+    argv.extend(["--ro-bind", "/lib64", "/lib64"])
+    argv.extend(["--bind", workspace, "/workspace"])
+    argv.extend(["--bind", tmp_dir, "/tmp"])
+    argv.append("--")
+    argv.extend(profile.argv)
+    return tuple(argv)
+
+
+def build_execution_plan(request):
+    from .execution_contract import ExecutionRequest
+    revalidated = ExecutionRequest(**request.model_dump())
+    profile = resolve_profile(revalidated)
+    workspace = _workspace_path(revalidated)
+    unit = _unit(revalidated, profile)
+    client_environment = {"PATH": "/usr/bin:/usr/sbin", "LANG": "C", "LC_ALL": "C"}
+    if profile.name == "diagnostic-v1":
+        argv = _v1_argv(workspace, profile)
+        return ExecutionPlan(
+            request_profile=profile.name,
+            workspace=workspace,
+            unit=unit,
+            argv=argv,
+            sandbox_argv=(),
+            shell=False,
+            storage_strategy="legacy-persistent-bind",
+            storage_mounts=(),
+            mount_namespace="default",
+            payload_user="pcsala-executor",
+            resource_properties=_RESOURCE_PROPS,
+            privileged_preparation_required=False,
+            executable=True,
+            output_bytes_max=65536,
+            workspace_bytes_max=16777216,
+            client_environment=client_environment,
+        )
+    storage = profile.storage
+    tmp_dir = workspace.rsplit("/", 1)[0] + "/tmp"
+    workspace_mount = dataclasses.replace(
+        StorageMountPlaceholder(
+            source=workspace,
+            target="/workspace",
+            bytes_max=storage.workspace_bytes,
+            inodes_max=storage.workspace_inodes,
+            filesystem="tmpfs",
+            options=("nosuid", "nodev", "noexec", "mode=0700"),
+        )
+    )
+    tmp_mount = StorageMountPlaceholder(
+        source=tmp_dir,
+        target="/tmp",
+        bytes_max=storage.tmp_bytes,
+        inodes_max=storage.tmp_inodes,
+        filesystem="tmpfs",
+        options=("nosuid", "nodev", "noexec", "mode=0700"),
+    )
+    sandbox_argv = _v2_sandbox_argv(workspace, tmp_dir, profile)
+    return ExecutionPlan(
+        request_profile=profile.name,
+        workspace=workspace,
+        unit=unit,
+        argv=(),
+        sandbox_argv=sandbox_argv,
+        shell=False,
+        storage_strategy="private-tmpfs",
+        storage_mounts=(workspace_mount, tmp_mount),
+        mount_namespace="private",
+        payload_user="pcsala-executor",
+        resource_properties=_RESOURCE_PROPS,
+        privileged_preparation_required=True,
+        executable=True,
+        output_bytes_max=65536,
+        workspace_bytes_max=storage.workspace_bytes,
+        client_environment=client_environment,
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class StorageMountPlaceholder:
     source: str
-    target: Literal["/workspace", "/tmp"]
+    target: str
     bytes_max: int
     inodes_max: int
-    filesystem: Literal["tmpfs"] = "tmpfs"
-    options: tuple[str, ...] = ("nosuid", "nodev", "noexec", "mode=0700")
-
-@dataclass(frozen=True)
-class ExecutionPlan:
-    unit: str
-    workspace: str
-    argv: tuple[str, ...]
-    client_environment: tuple[tuple[str, str], ...]
-    output_bytes_max: int
-    workspace_bytes_max: int
-    shell: Literal[False] = False
-    enforcement_pending: tuple[str, ...] = ()
-    storage_strategy: Literal[
-        "legacy-persistent-bind", "private-tmpfs",
-    ] = "legacy-persistent-bind"
-    storage_mounts: tuple[StorageMount, ...] = ()
-    sandbox_argv: tuple[str, ...] = ()
-    resource_properties: tuple[str, ...] = ()
-    privileged_preparation_required: bool = False
-    mount_namespace: Literal["unspecified", "private"] = "unspecified"
-    payload_user: str = "pcsala-executor"
-    executable: bool = True
-
-    def require_executable(self) -> None:
-        if not self.executable:
-            raise RuntimeError("Plano nao marcado como executavel")
-        if not self.argv and not self.sandbox_argv:
-            raise RuntimeError("Nenhum comando de execucao definido no plano")
-
-def _build_base_plan(request: ExecutionRequest) -> ExecutionPlan:
-    """Constroi dados; nao acessa arquivos nem executa processos."""
-    checked = ExecutionRequest.model_validate(request)
-    profile = resolve_profile(checked)
-    canonical = json.dumps(
-        checked.model_dump(), sort_keys=True, separators=(",", ":")
-    )
-    digest = hashlib.sha256(canonical.encode()).hexdigest()
-    unit = "pcsala-exec-" + digest + ".service"
-    workspace = str(
-        ROOT / checked.project_id / checked.session_id
-        / checked.task_id / checked.attempt_id / "workspace"
-    )
-    properties = (
-        "User=pcsala-executor",
-        "Group=pcsala-executor",
-        f"MemoryMax={profile.memory_bytes}",
-        f"MemorySwapMax={profile.swap_bytes}",
-        f"TasksMax={profile.tasks_max}",
-        f"CPUQuota={profile.cpu_percent}%",
-        f"RuntimeMaxSec={profile.runtime_seconds}s",
-        "TimeoutStopSec=2s",
-        "KillMode=control-group",
-        "OOMPolicy=kill",
-        "NoNewPrivileges=yes",
-        "WorkingDirectory=/",
-    )
-    argv = (
-        "/usr/bin/systemd-run",
-        "--unit=" + unit,
-        "--service-type=exec", "--wait", "--pipe",
-        *("--property=" + item for item in properties),
-        "/usr/bin/bwrap",
-        "--unshare-user", "--unshare-net", "--unshare-pid",
-        "--unshare-ipc", "--unshare-uts",
-        "--die-with-parent", "--new-session", "--clearenv",
-        "--setenv", "PATH", "/usr/bin",
-        "--setenv", "HOME", "/tmp",
-        "--setenv", "LANG", "C",
-        "--ro-bind", "/usr", "/usr",
-        "--ro-bind", "/lib", "/lib",
-        "--ro-bind", "/lib64", "/lib64",
-        "--proc", "/proc", "--dev", "/dev",
-        "--tmpfs", "/tmp",
-        "--dir", "/etc", "--dir", "/home", "--dir", "/run",
-        "--bind", workspace, "/workspace",
-        "--hostname", "pcsala-sandbox",
-        "--chdir", "/workspace",
-        "--", *profile.argv,
-    )
-    return ExecutionPlan(
-        unit=unit,
-        workspace=workspace,
-        argv=argv,
-        client_environment=(
-            ("PATH", "/usr/bin:/usr/sbin"),
-            ("LANG", "C"), ("LC_ALL", "C"),
-        ),
-        output_bytes_max=profile.output_bytes_max,
-        workspace_bytes_max=profile.workspace_bytes_max,
-    )
-
-
-def build_execution_plan(request: ExecutionRequest) -> ExecutionPlan:
-    """Planejamento puro; nao prepara montagens nem habilita execucao."""
-    checked = ExecutionRequest.model_validate(request)
-    profile = resolve_profile(checked)
-    base = _build_base_plan(checked)
-    if checked.profile == "diagnostic-v1":
-        return base
-
-    limits = profile.storage
-    if limits is None:
-        raise ValueError("Perfil sem limites de armazenamento")
-
-    tmp_source = str(PurePosixPath(base.workspace).parent / "tmp")
-    mounts = (
-        StorageMount(
-            source=base.workspace,
-            target="/workspace",
-            bytes_max=limits.workspace_bytes,
-            inodes_max=limits.workspace_inodes,
-        ),
-        StorageMount(
-            source=tmp_source,
-            target="/tmp",
-            bytes_max=limits.tmp_bytes,
-            inodes_max=limits.tmp_inodes,
-        ),
-    )
-
-    sandbox = list(base.argv[base.argv.index("/usr/bin/bwrap"):])
-    position = sandbox.index("--tmpfs")
-    if sandbox[position:position + 2] != ["--tmpfs", "/tmp"]:
-        raise ValueError("Estrutura inesperada do sandbox")
-    sandbox[position:position + 2] = ["--bind", tmp_source, "/tmp"]
-
-    properties = tuple(
-        item.removeprefix("--property=")
-        for item in base.argv
-        if item.startswith("--property=")
-    )
-
-    return replace(
-        base,
-        argv=(),
-        storage_strategy="private-tmpfs",
-        storage_mounts=mounts,
-        sandbox_argv=tuple(sandbox),
-        resource_properties=properties,
-        privileged_preparation_required=True,
-        mount_namespace="private",
-    )
+    filesystem: str
+    options: tuple

@@ -1,90 +1,81 @@
-import math
+from pydantic import ValidationError
 
-from .execution_contract import (
-    ExecutionRequest, ExecutionResult, resolve_profile,
-)
-from .output_collector import CollectedOutput
+from .execution_contract import ExecutionRequest, ExecutionResult
+from .output_collector import CollectedOutput, OutputCollectionError
 
 
-class InvalidCollectedOutput(ValueError):
-    """Dados de coleta invalidos ou incoerentes."""
+class InvalidCollectedOutput(Exception):
+    pass
 
 
-class SignalTerminationUnsupported(InvalidCollectedOutput):
-    """O contrato atual nao representa diretamente termino por sinal."""
-
+class SignalTerminationUnsupported(Exception):
     def __init__(self, returncode):
+        super().__init__(f"sinal {returncode} não suportado")
         self.returncode = returncode
-        super().__init__(
-            "COMMAND_ERROR com codigo negativo exige tratamento explicito; "
-            f"codigo bruto={returncode}"
-        )
 
 
-def adapt_collected_output(
-    request: ExecutionRequest,
-    collected: CollectedOutput,
-) -> ExecutionResult:
-    """Adapta somente dados; nao executa nem confirma encerramento.
+def _revalidate(req):
+    return ExecutionRequest(**req.model_dump())
 
-    TIMEOUT e OUTPUT_LIMIT descartam o codigo bruto no contrato.
-    Excecoes de coleta nao sao convertidas: falta a contagem parcial.
-    """
-    checked = ExecutionRequest.model_validate(request)
-    profile = resolve_profile(checked)
 
-    if type(collected) is not CollectedOutput:
-        raise InvalidCollectedOutput(
-            "Exigido CollectedOutput, nao excecao ou objeto alternativo"
-        )
-
-    status = collected.status
-    if type(status) is not str or status not in (
-        "SUCCESS", "COMMAND_ERROR", "TIMEOUT", "OUTPUT_LIMIT",
+def _validate_collected_fields(collected):
+    """Revalida tipos dos campos de CollectedOutput (dataclass sem execucao)."""
+    if not isinstance(collected.status, str):
+        raise InvalidCollectedOutput("status invalido")
+    if isinstance(collected.returncode, bool) or not isinstance(
+        collected.returncode, int
     ):
-        raise InvalidCollectedOutput("Status de coleta invalido")
+        raise InvalidCollectedOutput("returncode invalido")
+    if not isinstance(collected.stdout, bytes):
+        raise InvalidCollectedOutput("stdout invalido")
+    if not isinstance(collected.stderr, bytes):
+        raise InvalidCollectedOutput("stderr invalido")
+    if isinstance(collected.elapsed_seconds, bool) or not isinstance(
+        collected.elapsed_seconds, (int, float)
+    ):
+        raise InvalidCollectedOutput("elapsed_seconds invalido")
+    if collected.elapsed_seconds != collected.elapsed_seconds:
+        raise InvalidCollectedOutput("elapsed_seconds invalido")
+    if collected.elapsed_seconds in (float("inf"), float("-inf")) or collected.elapsed_seconds < 0:
+        raise InvalidCollectedOutput("elapsed_seconds invalido")
 
+
+def adapt_collected_output(req, collected):
+    if isinstance(collected, OutputCollectionError):
+        raise InvalidCollectedOutput("saida parcial indisponivel")
+    if not isinstance(collected, CollectedOutput):
+        raise InvalidCollectedOutput("objeto de saida invalido")
+    _validate_collected_fields(collected)
+    validated = _revalidate(req)
+    status = collected.status
     code = collected.returncode
-    if type(code) is not int:
-        raise InvalidCollectedOutput("Codigo bruto deve ser inteiro estrito")
-
-    if type(collected.stdout) is not bytes:
-        raise InvalidCollectedOutput("stdout deve ser bytes")
-    if type(collected.stderr) is not bytes:
-        raise InvalidCollectedOutput("stderr deve ser bytes")
-
-    output_bytes = len(collected.stdout) + len(collected.stderr)
-    if output_bytes > profile.output_bytes_max:
-        raise InvalidCollectedOutput("Saida retida excede o perfil")
-
-    elapsed = collected.elapsed_seconds
-    if type(elapsed) not in (int, float) or elapsed < 0:
-        raise InvalidCollectedOutput("Duracao invalida")
-    try:
-        finite = math.isfinite(elapsed)
-    except OverflowError:
-        finite = False
-    if not finite:
-        raise InvalidCollectedOutput("Duracao deve ser finita")
-
     if status == "SUCCESS":
         if code != 0:
-            raise InvalidCollectedOutput("Sucesso exige codigo bruto zero")
+            raise InvalidCollectedOutput("SUCCESS com exit_code != 0")
         exit_code = 0
+        result_status = "SUCCESS"
     elif status == "COMMAND_ERROR":
         if code < 0:
             raise SignalTerminationUnsupported(code)
-        if not 1 <= code <= 255:
-            raise InvalidCollectedOutput(
-                "Erro de comando exige codigo entre 1 e 255"
-            )
+        if code is None or code == 0 or code < 1 or code > 255:
+            raise InvalidCollectedOutput("COMMAND_ERROR codigo invalido")
         exit_code = code
-    else:
+        result_status = "COMMAND_ERROR"
+    elif status in ("TIMEOUT", "OUTPUT_LIMIT"):
         exit_code = None
-
-    return ExecutionResult(
-        request=checked,
-        status=status,
-        exit_code=exit_code,
-        output_bytes=output_bytes,
-    )
+        result_status = status
+    else:
+        raise InvalidCollectedOutput(f"status desconhecido: {status}")
+    total = len(collected.stdout) + len(collected.stderr)
+    if total > 65536:
+        raise InvalidCollectedOutput("saida excede o limite de 65536 bytes")
+    output_bytes = total
+    try:
+        return ExecutionResult(
+            request=validated,
+            status=result_status,
+            exit_code=exit_code,
+            output_bytes=output_bytes,
+        )
+    except ValidationError as exc:
+        raise InvalidCollectedOutput(str(exc)) from exc

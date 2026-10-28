@@ -1,72 +1,67 @@
-from dataclasses import dataclass
+from pydantic import BaseModel, ConfigDict
 
-from .execution_contract import ExecutionRequest, resolve_profile
 
-class ExecutionNotEligible(RuntimeError):
+class ExecutionNotEligible(Exception):
     pass
 
-@dataclass(frozen=True)
-class EligibilityObservation:
-    request: ExecutionRequest
+
+class ExecutionObservation(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    request: object
     session_revision: int
+    reason: str = ""
 
-def check_execution_eligibility(db, request: ExecutionRequest):
-    """Consulta consistente. Nao reserva tentativa nem autoriza execucao futura."""
-    checked = ExecutionRequest.model_validate(request)
-    resolve_profile(checked)
 
+def check_execution_eligibility(db, request):
     if db.in_transaction:
-        raise ExecutionNotEligible(
-            "Usar conexao sem transacao externa em curso"
-        )
-
-    db.execute("BEGIN")
-    try:
-        return _check_in_transaction(db, checked)
-    finally:
-        db.rollback()
-
-
-def _check_in_transaction(db, checked):
-    """Interno: exige transacao ja aberta; nao confirma nem desfaz."""
-    if not db.in_transaction:
-        raise ExecutionNotEligible("Transacao obrigatoria")
+        raise ExecutionNotEligible("transacao externa em andamento")
     row = db.execute(
-        """SELECT s.state, s.revision, t.status, a.status
-        FROM projects AS p
-        JOIN sessions AS s ON s.project_id=p.project_id
-        JOIN tasks AS t ON t.project_id=p.project_id
-        JOIN attempts AS a
-          ON a.project_id=p.project_id
-         AND a.session_id=s.session_id
-         AND a.task_id=t.task_id
-        WHERE p.project_id=? AND s.session_id=?
-          AND t.task_id=? AND a.attempt_id=?""",
-        (
-            checked.project_id, checked.session_id,
-            checked.task_id, checked.attempt_id,
-        ),
+        """SELECT project_id, session_id, task_id, attempt_id, revision
+        FROM attempts
+        JOIN sessions USING (project_id, session_id)
+        JOIN tasks USING (project_id, task_id)
+        WHERE attempts.attempt_id = ?""",
+        (request.attempt_id,),
     ).fetchone()
-
     if row is None:
-        raise ExecutionNotEligible(
-            "Entidades ausentes ou vinculos divergentes"
-        )
-
-    state, revision, task_status, attempt_status = tuple(row)
-    if state != "RUNNING":
-        raise ExecutionNotEligible("Sessao nao permite iniciar execucao")
-    if task_status != "RUNNING":
-        raise ExecutionNotEligible("Tarefa nao esta RUNNING")
-    if attempt_status != "RUNNING":
-        raise ExecutionNotEligible("Tentativa nao esta RUNNING")
-
+        raise ExecutionNotEligible("tentativa inexistente")
+    if (
+        row["project_id"] != request.project_id
+        or row["session_id"] != request.session_id
+        or row["task_id"] != request.task_id
+    ):
+        raise ExecutionNotEligible("escopo divergente")
+    session = db.execute(
+        "SELECT state, revision FROM sessions WHERE session_id=?",
+        (request.session_id,),
+    ).fetchone()
+    if session is None:
+        raise ExecutionNotEligible("sessao inexistente")
+    if session["state"] != "RUNNING":
+        raise ExecutionNotEligible("sessao nao RUNNING")
+    task = db.execute(
+        "SELECT status FROM tasks WHERE task_id=?",
+        (request.task_id,),
+    ).fetchone()
+    if task is None:
+        raise ExecutionNotEligible("tarefa inexistente")
+    if task["status"] != "RUNNING":
+        raise ExecutionNotEligible("tarefa nao RUNNING")
+    attempt = db.execute(
+        "SELECT status FROM attempts WHERE attempt_id=?",
+        (request.attempt_id,),
+    ).fetchone()
+    if attempt is None:
+        raise ExecutionNotEligible("tentativa inexistente")
+    if attempt["status"] != "RUNNING":
+        raise ExecutionNotEligible("tentativa nao RUNNING")
     pending = db.execute(
-        """SELECT COUNT(*) FROM control_requests
-        WHERE session_id=? AND status='REQUESTED'""",
-        (checked.session_id,),
-    ).fetchone()[0]
-    if pending:
-        raise ExecutionNotEligible("Pedido de controle pendente")
-
-    return EligibilityObservation(checked, revision)
+        """SELECT 1 FROM control_requests
+        WHERE session_id=? AND status='REQUESTED' LIMIT 1""",
+        (request.session_id,),
+    ).fetchone()
+    if pending is not None:
+        raise ExecutionNotEligible("controle pendente")
+    return ExecutionObservation(
+        request=request, session_revision=session["revision"]
+    )

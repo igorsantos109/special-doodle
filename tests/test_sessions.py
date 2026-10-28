@@ -3,7 +3,8 @@ import pytest
 from pcsala_agent.checkpoints import CheckpointStore, RecoveryRequired
 from pcsala_agent.database import connect
 from pcsala_agent.migrations import migrate
-from pcsala_agent.sessions import SessionController, SessionConflict
+from pcsala_agent.sessions import SessionConflict, SessionController
+
 
 @pytest.fixture
 def setup(tmp_path):

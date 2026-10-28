@@ -1,93 +1,86 @@
+import shutil
+import sqlite3
 from pathlib import Path
-from uuid import uuid4
 
-from .database import connect
-from .locking import database_lock
 
-class MigrationError(RuntimeError):
+class MigrationError(Exception):
     pass
 
-MIGRATIONS = (
-    (1, "001_checkpoints.sql"),
-    (2, "002_sessions.sql"),
-    (3, "003_execution_acceptances.sql"),
-    (4, "004_task_queue.sql"),
-    (5, "005_model_operations.sql"),
-)
+
+def _known_versions(migrations_dir):
+    versions = []
+    for f in sorted(migrations_dir.glob("[0-9]*_*.sql")):
+        try:
+            versions.append(int(f.stem.split("_")[0]))
+        except ValueError:
+            continue
+    return versions
+
+
+def _current_version(conn):
+    return conn.execute(
+        "SELECT COALESCE(MAX(version), 0) FROM schema_migrations"
+    ).fetchone()[0]
+
+
+def _create_backup(database_path):
+    backup_path = database_path.with_suffix(database_path.suffix + ".bak")
+    shutil.copy2(database_path, backup_path)
+    return str(backup_path)
+
 
 def migrate(database_path, migrations_dir=None):
-    """Migracao local exclusiva. Backups sao preservados, nunca apagados."""
-    path = Path(database_path).resolve()
-    directory = (
-        Path(migrations_dir)
-        if migrations_dir is not None
-        else Path(__file__).resolve().parents[2] / "migrations"
-    )
-
-    scripts = {}
-    for version, filename in MIGRATIONS:
-        scripts[version] = (directory / filename).read_text(encoding="utf-8")
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with database_lock(path):
-        existed = path.exists()
-        db = connect(path)
+    database_path = Path(database_path)
+    if migrations_dir is None:
+        migrations_dir = Path(__file__).resolve().parents[2] / "migrations"
+    migrations_dir = Path(migrations_dir)
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(database_path))
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        has_table = conn.execute(
+            """SELECT name FROM sqlite_master
+            WHERE type='table' AND name='schema_migrations'"""
+        ).fetchone() is not None
+        if has_table:
+            current = _current_version(conn)
+        else:
+            current = 0
+        known = _known_versions(migrations_dir)
+        if current not in known and current != 0:
+            raise MigrationError(f"versao desconhecida {current}")
+        applied = []
         backup_path = None
-        try:
-            tables = {
-                row[0] for row in db.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
+        pending = [v for v in known if v > current]
+        if pending:
+            backup_path = _create_backup(database_path)
+            for version in sorted(pending):
+                matches = sorted(
+                    migrations_dir.glob(f"{version:03d}_*.sql")
                 )
-            }
-            if "schema_migrations" not in tables:
-                if tables:
-                    raise MigrationError("Banco existente sem esquema reconhecido")
-                applied = []
-            else:
-                applied = [
-                    row[0] for row in db.execute(
-                        "SELECT version FROM schema_migrations ORDER BY version"
+                if not matches:
+                    matches = sorted(
+                        migrations_dir.glob(f"{version}_*.sql")
                     )
-                ]
-                known = [item[0] for item in MIGRATIONS]
-                if applied != known[:len(applied)] or not applied:
-                    raise MigrationError("Sequencia de versoes desconhecida")
-
-            pending = [
-                version for version, _ in MIGRATIONS if version not in applied
-            ]
-            if not pending:
-                return {"version": applied[-1], "applied": [], "backup": None}
-
-            integrity = [row[0] for row in db.execute("PRAGMA integrity_check")]
-            if integrity != ["ok"]:
-                raise MigrationError("Integridade do banco nao confirmada")
-
-            if existed:
-                backup_path = path.with_name(
-                    path.name + ".backup-" + str(uuid4()) + ".sqlite"
-                )
-                backup = connect(backup_path)
+                if not matches:
+                    conn.rollback()
+                    shutil.copy2(backup_path, database_path)
+                    raise MigrationError(f"Sem migration para versão {version}")
+                script = matches[0]
                 try:
-                    db.backup(backup)
-                finally:
-                    backup.close()
-
-            completed = []
-            for version in pending:
-                try:
-                    db.executescript(scripts[version])
-                    if db.in_transaction:
-                        raise MigrationError("Script deixou transacao aberta")
-                    completed.append(version)
-                except BaseException:
-                    db.rollback()
+                    conn.executescript(script.read_text(encoding="utf-8"))
+                    conn.commit()
+                except sqlite3.Error:
+                    conn.rollback()
+                    if backup_path:
+                        shutil.copy2(backup_path, database_path)
                     raise
-
-            return {
-                "version": completed[-1],
-                "applied": completed,
-                "backup": str(backup_path) if backup_path else None,
-            }
-        finally:
-            db.close()
+                applied.append(version)
+        return {
+            "version": current if not applied else applied[-1],
+            "applied": applied,
+            "backup": backup_path,
+        }
+    finally:
+        conn.close()

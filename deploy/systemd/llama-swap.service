@@ -1,0 +1,31 @@
+[Unit]
+Description=llama-swap proxy (piloto Bonsai 4B, porta 8093)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+User=igor
+Group=igor
+WorkingDirectory=/home/igor
+Environment=LD_LIBRARY_PATH=/home/igor/opt/prism-pascal-build/install/lib
+# Substituir pelo caminho real do binário llama-swap antes de iniciar.
+ExecStart=/home/igor/opt/llama-swap/llama-swap \
+    --config /home/igor/ia-sh/pc-sala-agent/deploy/llama-swap/config.yaml \
+    --host 127.0.0.1 \
+    --port 8093
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=60s
+KillMode=control-group
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+UMask=0077
+
+# Não habilitado no boot por padrão (piloto).
+# sudo systemctl enable --now llama-swap.service  (após aprovação)
+
+[Install]
+WantedBy=multi-user.target

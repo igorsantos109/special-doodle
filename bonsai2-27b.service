@@ -8,20 +8,25 @@ Type=exec
 User=igor
 Group=igor
 WorkingDirectory=/home/igor
-Environment=LD_LIBRARY_PATH=/home/igor/opt/prism-gpu-build/install/lib
-ExecStart=/home/igor/opt/prism-gpu-build/install/bin/llama-server \
+Environment=LD_LIBRARY_PATH=/home/igor/opt/prism-pascal-build/install/lib
+StateDirectory=pcsala-worker
+ExecStartPre=/usr/bin/install -d -m 0700 /var/lib/pcsala-worker/slots
+ExecStart=/home/igor/opt/prism-pascal-build/install/bin/llama-server \
     -m /home/igor/models/bonsai-2-27b/Ternary-Bonsai-2-27B-PQ2_0.gguf \
     --host 127.0.0.1 \
     --port 8080 \
-    -c 55000 \
+    -c 64000 \
     -t 8 \
     -ngl 99 \
-    --no-kv-offload \
+    --flash-attn on \
     -n 2048 \
     --parallel 1 \
     --no-jinja \
     --threads-http 4 \
-    --api-key-file /home/igor/.config/pcsala-bonsai/api.key
+    --spec-type draft-mtp \
+    --spec-draft-n-max 2 \
+    --spec-draft-p-min 0.4 \
+    --slot-save-path /var/lib/pcsala-worker/slots
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=60s

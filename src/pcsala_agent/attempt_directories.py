@@ -1,69 +1,74 @@
 import os
 import stat
-from contextlib import ExitStack
-from dataclasses import dataclass
 
-from .execution_contract import ExecutionRequest
+FLAGS = os.O_NOFOLLOW | os.O_DIRECTORY
+DIR_CREATE_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
-class DirectoryPreparationError(RuntimeError):
+
+class AttemptAlreadyExists(Exception):
     pass
 
-class AttemptAlreadyExists(DirectoryPreparationError):
+
+class DirectoryPreparationError(Exception):
     pass
 
-@dataclass(frozen=True)
+
 class PreparedAttempt:
-    relative_attempt: str
-    relative_workspace: str
+    def __init__(self, relative_attempt, relative_workspace):
+        self.relative_attempt = relative_attempt
+        self.relative_workspace = relative_workspace
 
-FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
-def _check(fd):
-    info = os.fstat(fd)
-    if not stat.S_ISDIR(info.st_mode):
-        raise DirectoryPreparationError("Descritor nao representa diretorio")
-    if info.st_uid != os.geteuid():
-        raise DirectoryPreparationError("Proprietario administrativo inesperado")
-    if stat.S_IMODE(info.st_mode) & 0o022:
-        raise DirectoryPreparationError("Diretorio gravavel por grupo ou outros")
+def _reject_writable(st, label):
+    if stat.S_IMODE(st.st_mode) & 0o022:
+        raise DirectoryPreparationError(f"{label} gravavel")
 
-def prepare_attempt(root_fd: int, request: ExecutionRequest) -> PreparedAttempt:
-    """Prototipo local: todos os diretorios permanecem com o UID chamador."""
-    checked = ExecutionRequest.model_validate(request)
+
+def prepare_attempt(root_fd, request):
     parts = (
-        checked.project_id, checked.session_id,
-        checked.task_id, checked.attempt_id,
+        request.project_id,
+        request.session_id,
+        request.task_id,
+        request.attempt_id,
     )
-    with ExitStack() as stack:
-        parent = os.dup(root_fd)
-        stack.callback(os.close, parent)
-        _check(parent)
-
-        for name in parts[:3]:
-            try:
-                os.mkdir(name, mode=0o700, dir_fd=parent)
-            except FileExistsError:
-                pass
-            child = os.open(name, FLAGS, dir_fd=parent)
-            stack.callback(os.close, child)
-            _check(child)
-            parent = child
-
+    root_st = os.fstat(root_fd)
+    if not stat.S_ISDIR(root_st.st_mode):
+        raise DirectoryPreparationError("root não é diretório")
+    _reject_writable(root_st, "root")
+    current = root_fd
+    for i, name in enumerate(parts):
+        is_last = i == len(parts) - 1
         try:
-            os.mkdir(parts[3], mode=0o700, dir_fd=parent)
-        except FileExistsError as error:
-            raise AttemptAlreadyExists(
-                "Tentativa ja existe; nao sera reutilizada"
-            ) from error
-
-        attempt = os.open(parts[3], FLAGS, dir_fd=parent)
-        stack.callback(os.close, attempt)
-        _check(attempt)
-
-        os.mkdir("workspace", mode=0o700, dir_fd=attempt)
-        workspace = os.open("workspace", FLAGS, dir_fd=attempt)
-        stack.callback(os.close, workspace)
-        _check(workspace)
-
-    relative = "/".join(parts)
-    return PreparedAttempt(relative, relative + "/workspace")
+            fd = os.open(name, DIR_CREATE_FLAGS, dir_fd=current)
+            st = os.fstat(fd)
+            if stat.S_ISDIR(st.st_mode):
+                os.close(fd)
+                current = os.open(name, DIR_CREATE_FLAGS, dir_fd=current)
+                if is_last:
+                    raise AttemptAlreadyExists(
+                        "/".join([request.project_id, request.session_id,
+                                  request.task_id, request.attempt_id])
+                    )
+                _reject_writable(os.fstat(current), "/".join(parts[:i + 1]))
+                continue
+            os.close(fd)
+            raise DirectoryPreparationError(f"{name} não é diretório")
+        except FileNotFoundError:
+            try:
+                os.mkdir(name, 0o700, dir_fd=current)
+            except FileExistsError:
+                current = os.open(name, DIR_CREATE_FLAGS, dir_fd=current)
+                if is_last:
+                    raise AttemptAlreadyExists("/".join(parts))
+                _reject_writable(os.fstat(current), "/".join(parts[:i + 1]))
+                continue
+            current = os.open(name, DIR_CREATE_FLAGS, dir_fd=current)
+    try:
+        os.mkdir("workspace", 0o700, dir_fd=current)
+    except FileExistsError:
+        pass
+    os.close(current)
+    return PreparedAttempt(
+        relative_attempt="/".join(parts),
+        relative_workspace="/".join(parts) + "/workspace",
+    )

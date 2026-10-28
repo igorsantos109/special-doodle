@@ -167,6 +167,7 @@ class TestLagunaModelRegistry:
         ids = {m.model_id for m in reg.list()}
         assert ids == {
             "bonsai-27b-gpu",
+            "bonsai-4b-gpu",
             "bonsai-9b-cpu",
             "laguna-xs-2.1-cpu",
             "laguna-xs-2.1-gpu",
@@ -176,9 +177,10 @@ class TestLagunaModelRegistry:
 
 class TestLagunaCoordinator:
     def test_ensure_ready_on_stopped_model_does_not_start(self):
-        from pcsala_agent.model_manager import ModelRegistry, ModelCoordinator
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+
+        from pcsala_agent.model_manager import ModelCoordinator, ModelRegistry
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "state.sqlite"
             reg = ModelRegistry()
@@ -188,16 +190,17 @@ class TestLagunaCoordinator:
             assert result.health != "healthy"
 
     def test_unknown_target_rejected(self):
-        from pcsala_agent.model_manager import ModelRegistry, ModelCoordinator
+        from pcsala_agent.model_manager import ModelCoordinator, ModelRegistry
         reg = ModelRegistry()
         coord = ModelCoordinator(reg)
         with pytest.raises(ValueError, match="Modelo desconhecido"):
             coord.ensure_ready("laguna-fake")
 
     def test_operation_persists_and_can_be_queried(self):
-        from pcsala_agent.model_manager import ModelRegistry, ModelCoordinator
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+
+        from pcsala_agent.model_manager import ModelCoordinator, ModelRegistry
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "state.sqlite"
             reg = ModelRegistry()
@@ -212,10 +215,10 @@ class TestLagunaCoordinator:
 
 class TestNoSilentFallback:
     def test_default_profile_still_bonsai(self):
-        from pcsala_agent.inference_profiles import PROFILES
-        from pcsala_agent.graph_runner import execute as worker_execute
         import tempfile
         from pathlib import Path
+
+        from pcsala_agent.graph_runner import execute as worker_execute
 
         def fake_urlopen(*a, **kw):
             class Fake:
@@ -231,6 +234,30 @@ class TestNoSilentFallback:
         os.environ["DSH_LOCAL_API_KEY"] = "test-laguna-fallback"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            # _ensure_environment em produção apenas valida; o teste cria o escopo.
+            from pcsala_agent.database import connect
+            from pcsala_agent.migrations import migrate
+            db_path = root / "state.sqlite"
+            migrate(db_path)
+            conn = connect(db_path)
+            with conn:
+                conn.execute(
+                    "INSERT INTO projects(project_id,name,authorized_root)"
+                    " VALUES ('p','Teste','/tmp')"
+                )
+                conn.execute(
+                    "INSERT INTO sessions(session_id,project_id,state,revision)"
+                    " VALUES ('s','p','RUNNING',0)"
+                )
+                conn.execute(
+                    "INSERT INTO tasks(task_id,project_id,title,acceptance_criteria,status)"
+                    " VALUES ('t','p','Teste','Ok','RUNNING')"
+                )
+                conn.execute(
+                    "INSERT INTO attempts(attempt_id,project_id,session_id,task_id,status)"
+                    " VALUES ('a','p','s','t','RUNNING')"
+                )
+            conn.close()
             result = worker_execute(
                 root, "iniciar", "p", "s", "t", "a", "test prompt",
                 _skip_health_check=True, _urlopen=fake_urlopen,

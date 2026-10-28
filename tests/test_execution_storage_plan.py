@@ -4,7 +4,10 @@ import pytest
 from pydantic import ValidationError
 
 from pcsala_agent.execution_contract import (
-    ExecutionProfile, ExecutionRequest, StorageLimits, resolve_profile,
+    ExecutionProfile,
+    ExecutionRequest,
+    StorageLimits,
+    resolve_profile,
 )
 from pcsala_agent.execution_plan import build_execution_plan
 

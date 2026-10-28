@@ -1,23 +1,30 @@
 import hashlib
 import os
-from uuid import uuid4
+from datetime import UTC, datetime
 
-class RecoveryRequired(RuntimeError):
+CHECKPOINT_STATES = ("PREPARING", "COMMITTED", "NEEDS_RECOVERY")
+OPERATION_STATES = (
+    "NOT_STARTED", "STARTED", "COMPLETED", "FAILED", "INDETERMINATE",
+)
+
+
+class RecoveryRequired(Exception):
     pass
 
-def new_id():
-    return str(uuid4())
+
+def _now():
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
 
 class CheckpointStore:
-    """Uso inicial exclusivo: sem escritores concorrentes ou codigo nao confiavel."""
-
-    def __init__(self, db, artifact_root):
+    def __init__(self, db, root):
         self.db = db
-        self.root = artifact_root.resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.root = root
 
     def prepare(self, project_id, session_id, task_id):
-        checkpoint_id = new_id()
+        checkpoint_id = hashlib.sha256(
+            f"{project_id}/{session_id}/{task_id}/{_now()}/{os.urandom(8).hex()}".encode()
+        ).hexdigest()
         with self.db:
             self.db.execute(
                 """INSERT INTO checkpoints
@@ -27,95 +34,104 @@ class CheckpointStore:
             )
         return checkpoint_id
 
-    def _preparing(self, checkpoint_id):
-        row = self.db.execute(
-            "SELECT status FROM checkpoints WHERE checkpoint_id=?",
-            (checkpoint_id,),
-        ).fetchone()
-        if row is None or row["status"] != "PREPARING":
-            raise RecoveryRequired("Checkpoint inexistente ou nao esta PREPARING")
-
-    def add_artifact(self, checkpoint_id, content):
-        self._preparing(checkpoint_id)
-        artifact_id = new_id()
-        relative_path = artifact_id + ".bin"
-        path = self.root / relative_path
-        with path.open("xb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        directory = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+    def add_artifact(self, checkpoint_id, data):
+        rel = self._relative_path(checkpoint_id)
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        digest = hashlib.sha256(data).hexdigest()
         with self.db:
-            self._preparing(checkpoint_id)
             self.db.execute(
-                "INSERT INTO artifacts VALUES (?, ?, ?, ?, ?)",
+                """INSERT INTO artifacts
+                (artifact_id, checkpoint_id, relative_path, sha256, size_bytes)
+                VALUES (?, ?, ?, ?, ?)""",
                 (
-                    artifact_id, checkpoint_id, relative_path,
-                    hashlib.sha256(content).hexdigest(), len(content),
+                    checkpoint_id + ":" + rel,
+                    checkpoint_id,
+                    rel,
+                    digest,
+                    len(data),
                 ),
             )
         return path
 
-    def verify(self, checkpoint_id):
-        rows = self.db.execute(
-            "SELECT * FROM artifacts WHERE checkpoint_id=?",
-            (checkpoint_id,),
-        ).fetchall()
-        if not rows:
-            raise RecoveryRequired("Checkpoint sem artefatos")
-        for row in rows:
-            path = self.root / row["relative_path"]
-            if path.is_symlink() or path.resolve().parent != self.root:
-                raise RecoveryRequired("Caminho de artefato invalido")
-            try:
-                data = path.read_bytes()
-            except OSError as error:
-                raise RecoveryRequired("Artefato indisponivel") from error
-            if (
-                len(data) != row["size_bytes"]
-                or hashlib.sha256(data).hexdigest() != row["sha256"]
-            ):
-                raise RecoveryRequired("Artefato alterado")
+    def _relative_path(self, checkpoint_id):
+        return f"{checkpoint_id}.bin"
 
     def commit(self, checkpoint_id):
+        row = self.db.execute(
+            "SELECT artifact_id FROM artifacts WHERE checkpoint_id=? AND sha256 IS NOT NULL",
+            (checkpoint_id,),
+        ).fetchone()
+        if row is None:
+            raise RecoveryRequired("sem artefato")
+        artifacts = self.db.execute(
+            "SELECT relative_path, sha256 FROM artifacts WHERE checkpoint_id=?",
+            (checkpoint_id,),
+        ).fetchall()
+        for art in artifacts:
+            path = self.root / art["relative_path"]
+            if not path.exists():
+                raise RecoveryRequired(f"artefato ausente {art['relative_path']}")
+            if hashlib.sha256(path.read_bytes()).hexdigest() != art["sha256"]:
+                raise RecoveryRequired(f"artefato alterado {art['relative_path']}")
         with self.db:
-            self._preparing(checkpoint_id)
-            self.verify(checkpoint_id)
             self.db.execute(
-                """UPDATE checkpoints
-                SET status='COMMITTED', committed_at=CURRENT_TIMESTAMP
-                WHERE checkpoint_id=?""",
-                (checkpoint_id,),
+                """UPDATE checkpoints SET status='COMMITTED',
+                committed_at=? WHERE checkpoint_id=?""",
+                (_now(), checkpoint_id),
             )
 
     def latest(self, project_id, session_id, task_id):
         row = self.db.execute(
-            """SELECT * FROM checkpoints
+            """SELECT checkpoint_id FROM checkpoints
             WHERE project_id=? AND session_id=? AND task_id=?
-              AND status='COMMITTED'
+            AND status='COMMITTED'
             ORDER BY seq DESC LIMIT 1""",
             (project_id, session_id, task_id),
         ).fetchone()
-        if row is not None:
-            self.verify(row["checkpoint_id"])
-            return dict(row)
-        return None
+        if row is None:
+            return None
+        checkpoint_id = row["checkpoint_id"]
+        artifacts = self.db.execute(
+            "SELECT relative_path, sha256 FROM artifacts WHERE checkpoint_id=?",
+            (checkpoint_id,),
+        ).fetchall()
+        for art in artifacts:
+            path = self.root / art["relative_path"]
+            if not path.exists():
+                raise RecoveryRequired("artefato ausente")
+            if hashlib.sha256(path.read_bytes()).hexdigest() != art["sha256"]:
+                raise RecoveryRequired("artefato alterado")
+        return {"checkpoint_id": checkpoint_id}
 
     def recover(self, project_id, session_id):
-        """Executar apenas com a sessao parada e sem escritor ativo."""
+        checkpoints_marked = 0
         with self.db:
-            checkpoints = self.db.execute(
-                """UPDATE checkpoints SET status='NEEDS_RECOVERY'
-                WHERE project_id=? AND session_id=? AND status='PREPARING'""",
+            rows = self.db.execute(
+                """SELECT checkpoint_id FROM checkpoints
+                WHERE project_id=? AND session_id=?
+                AND status='PREPARING'""",
                 (project_id, session_id),
-            ).rowcount
-            operations = self.db.execute(
-                """UPDATE operations SET status='INDETERMINATE'
-                WHERE project_id=? AND session_id=? AND status='STARTED'""",
+            ).fetchall()
+            for row in rows:
+                self.db.execute(
+                    """UPDATE checkpoints SET status='NEEDS_RECOVERY'
+                    WHERE checkpoint_id=?""",
+                    (row["checkpoint_id"],),
+                )
+            checkpoints_marked = len(rows)
+            op_rows = self.db.execute(
+                """SELECT operation_id FROM operations
+                WHERE project_id=? AND session_id=?
+                AND status='STARTED'""",
                 (project_id, session_id),
-            ).rowcount
-        return {"checkpoints": checkpoints, "operations": operations}
+            ).fetchall()
+            for row in op_rows:
+                self.db.execute(
+                    """UPDATE operations SET status='INDETERMINATE',
+                    result_reference=NULL WHERE operation_id=?""",
+                    (row["operation_id"],),
+                )
+            operations_marked = len(op_rows)
+        return {"checkpoints": checkpoints_marked, "operations": operations_marked}

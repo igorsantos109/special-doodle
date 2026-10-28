@@ -3,9 +3,11 @@ import pytest
 from pcsala_agent.database import connect
 from pcsala_agent.execution_contract import ExecutionRequest
 from pcsala_agent.execution_eligibility import (
-    ExecutionNotEligible, check_execution_eligibility,
+    ExecutionNotEligible,
+    check_execution_eligibility,
 )
 from pcsala_agent.migrations import migrate
+
 
 def request(**changes):
     values = dict(

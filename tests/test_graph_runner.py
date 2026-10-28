@@ -3,8 +3,13 @@ import os
 import subprocess
 import sys
 
-from pcsala_agent.graph_runner import execute as worker_execute, _check_model_server
-from pcsala_agent.locking import database_lock
+from pcsala_agent.graph_runner import (
+    _check_model_server,
+)
+from pcsala_agent.graph_runner import (
+    execute as worker_execute,
+)
+from pcsala_agent.locking import ExecutorBusy, database_lock
 
 
 def _response(status=200, body=None):
@@ -29,7 +34,7 @@ def _chat_completion(text, model="test-model"):
 
 
 def _make_env(tmp_path):
-    from pcsala_agent.database import connect, initialize
+    from pcsala_agent.database import connect
     from pcsala_agent.migrations import migrate
     db_path = tmp_path / "state.sqlite"
     migrate(db_path)
@@ -62,7 +67,7 @@ def cli(root, command, attempt="a", prompt="prompt de teste"):
             "--project", "p", "--session", "s", "--task", "t",
             "--attempt", attempt, "--prompt", prompt,
         ],
-        capture_output=True, text=True, timeout=30,
+        check=False, capture_output=True, text=True, timeout=30,
     )
 
 
@@ -117,22 +122,43 @@ class TestWorkerAPI:
         assert "vazio" in result["error"].lower()
 
     def test_worker_respeita_bloqueio(self, tmp_path):
+        _make_env(tmp_path)
         with database_lock(tmp_path / "state.sqlite"):
-            result = cli(tmp_path, "iniciar")
-            assert result.returncode == 3, result.stderr
+            try:
+                worker_execute(
+                    tmp_path, "iniciar", "p", "s", "t", "a", "prompt",
+                    _skip_health_check=True,
+                )
+            except ExecutorBusy:
+                pass
+            else:
+                raise AssertionError("esperava ExecutorBusy")
 
 
 class TestWorkerHealthCheck:
     def test_worker_health_check_falha_quando_servidor_indisponivel(self):
-        import socket
-        original = socket.create_connection
-        def failing_connect(*a, **kw):
+        import urllib.request
+        original = urllib.request.urlopen
+        def failing_open(*a, **kw):
             raise ConnectionRefusedError("Simulando servidor indisponivel")
-        socket.create_connection = failing_connect
+        urllib.request.urlopen = failing_open
         try:
-            assert not _check_model_server()
+            assert not _check_model_server("http://127.0.0.1:8080")
         finally:
-            socket.create_connection = original
+            urllib.request.urlopen = original
+
+    def test_worker_health_check_servidor_indisponivel_retorna_retry(self, tmp_path):
+        _make_env(tmp_path)
+        result = worker_execute(
+            tmp_path, "iniciar", "p", "s", "t", "a", "prompt",
+            _urlopen=lambda *a, **kw: _response(
+                body=_chat_completion("resposta")
+            ),
+        )
+        # Sem _skip_health_check: health check falha (sem servidor real),
+        # deve retornar RETRY, nunca CONCLUIDO.
+        assert result["status"] == "RETRY"
+        assert result["inference_status"] == "UNAVAILABLE"
 
     def test_worker_health_check_pode_ser_pulado(self, tmp_path):
         os.environ["DSH_LOCAL_API_KEY"] = "test-key-worker"
@@ -160,9 +186,15 @@ class TestWorkerRecovery:
         conn.commit()
         conn.close()
 
-        result = cli(tmp_path, "iniciar")
-        assert result.returncode == 2, result.stderr
-        assert "reconciliacao" in result.stderr.lower()
+        try:
+            worker_execute(
+                tmp_path, "iniciar", "p", "s", "t", "a", "prompt",
+                _skip_health_check=True,
+            )
+        except RuntimeError as exc:
+            assert "reconciliacao" in str(exc).lower()
+        else:
+            raise AssertionError("esperava RuntimeError de reconciliacao")
 
     def test_worker_retomada_sem_artefato_exige_cli_retomar(self, tmp_path):
         os.environ["DSH_LOCAL_API_KEY"] = "test-key-worker"
@@ -174,15 +206,22 @@ class TestWorkerRecovery:
                 body=_chat_completion("resultado")
             ),
         )
-        result = cli(tmp_path, "iniciar")
-        assert result.returncode == 2, result.stderr
+        try:
+            worker_execute(
+                tmp_path, "iniciar", "p", "s", "t", "a", "prompt",
+                _skip_health_check=True,
+            )
+        except RuntimeError as exc:
+            assert "concluida" in str(exc).lower()
+        else:
+            raise AssertionError("esperava RuntimeError de execucao ja concluida")
 
 
 class TestWorkerCLI:
     def test_cli_help(self, tmp_path):
         result = subprocess.run(
             [sys.executable, "-m", "pcsala_agent.graph_runner", "--help"],
-            capture_output=True, text=True, timeout=10,
+            check=False, capture_output=True, text=True, timeout=10,
             env={**os.environ, "PYTHONPATH": os.path.abspath("src")},
         )
         assert result.returncode == 0
@@ -191,7 +230,7 @@ class TestWorkerCLI:
     def test_cli_usage_string(self):
         result = subprocess.run(
             [sys.executable, "-m", "pcsala_agent.graph_runner", "--help"],
-            capture_output=True, text=True, timeout=10,
+            check=False, capture_output=True, text=True, timeout=10,
             env={**os.environ, "PYTHONPATH": os.path.abspath("src")},
         )
         assert result.returncode == 0

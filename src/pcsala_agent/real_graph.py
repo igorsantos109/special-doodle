@@ -1,549 +1,331 @@
-import argparse
 import hashlib
 import json
 import os
 import sys
-from pathlib import Path
-from typing import Literal, TypedDict
+import urllib.request as urlrequest
+from datetime import UTC, datetime
 
-from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.graph import END, START, StateGraph
-from langsmith import tracing_context
-
-from .checkpoints import CheckpointStore, RecoveryRequired, new_id
-from .context_budget import (
-    BudgetCheck, PRIMARY_INPUT_BUDGET,
-    check_budget, compress_context, ContextOverflow, CompressionError,
-)
+from .checkpoints import CheckpointStore
+from .context_budget import count_tokens
 from .database import connect
 from .inference_adapter import InferenceAdapter
-from .inference_contract import InferenceRequest
-from .inference_profiles import get_profile, PROFILES
-from .locking import ExecutorBusy, database_lock
-from .migrations import migrate
+from .inference_contract import InferenceConfig, InferenceRequest
+
+GRAPH_ENDPOINT = "http://127.0.0.1:8080"
+
+# Slot save/restore (KV de documentos longos) esta DESATIVADO por default.
+# So deve ser ativado (PCSALA_SLOT_SAVE_RESTORE=1) apos validar num slot
+# descartavel se o MROPE aceita o restauro. Caso nao aceite, registrar no
+# guia e manter desativado (ver GUIA_MESTRE).
+SLOT_SAVE_RESTORE_ENABLED = os.environ.get("PCSALA_SLOT_SAVE_RESTORE", "0") == "1"
 
 
-Step = Literal[
-    "iniciado", "validado", "verificado_orcamento", "comprimido",
-    "inferiu", "validado_resposta", "concluido", "falha",
-]
+def _now():
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-class TriageState(TypedDict):
-    project_id: str
-    session_id: str
-    task_id: str
-    attempt_id: str
-    step: Step
-    inference_prompt: str
-    inference_id: str
-    inference_response: str
-    inference_model: str
-    inference_status: str
-    error: str
+def _thread_id(scope):
+    return hashlib.sha256(json.dumps(scope, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
-def _session_state(db, project, session):
-    row = db.execute(
-        "SELECT state FROM sessions WHERE session_id=? AND project_id=?",
-        (session, project),
-    ).fetchone()
-    return row["state"] if row else None
+def _scope(project, session, task, attempt):
+    return (project, session, task, attempt)
 
 
-def _should_stop(db, project, session):
-    state = _session_state(db, project, session)
-    if state is None:
-        return "Sessao inexistente"
-    if state in ("STOPPED", "DRAINING", "CHECKPOINTING", "ERROR",
-                  "RECOVERY_REQUIRED"):
-        return f"Sessao em estado {state}"
-    if state == "PAUSE_REQUESTED":
-        pending = db.execute(
-            """SELECT COUNT(*) FROM control_requests
-            WHERE session_id=? AND status='REQUESTED'""",
-            (session,),
-        ).fetchone()[0]
-        if pending:
-            return "Pausa pendente"
-    return ""
+def _slot_action(endpoint, slot_id, action, _urlopen=None):
+    """POST /slots/<id>?action=save|restore (KV de documentos longos).
 
-
-def _confirmed_artifact(store, project, session, task):
-    checkpoint = store.latest(project, session, task)
-    if checkpoint is None:
+    Somente efetivo quando SLOT_SAVE_RESTORE_ENABLED. Retorna None quando
+    desativado ou quando o servidor nao esta disponivel.
+    """
+    if not SLOT_SAVE_RESTORE_ENABLED:
         return None
-    rows = store.db.execute(
-        "SELECT relative_path FROM artifacts WHERE checkpoint_id=?",
-        (checkpoint["checkpoint_id"],),
+    if _urlopen is None:
+        _urlopen = urlrequest.urlopen
+    import urllib.error
+    url = f"{endpoint.rstrip('/')}/slots/{slot_id}?action={action}"
+    try:
+        req = _urlopen(url)
+        req.read()
+        return True
+    except (urllib.error.URLError, OSError):
+        return False
+
+
+
+def _has_indeterminate(db, project, session, task, attempt):
+    row = db.execute(
+        """SELECT 1 FROM operations
+        WHERE project_id=? AND session_id=? AND task_id=?
+        AND status='INDETERMINATE' LIMIT 1""",
+        (project, session, task),
+    ).fetchone()
+    return row is not None
+
+
+def _find_completed_inference(db, store, project, session, task):
+    rows = db.execute(
+        """SELECT checkpoint_id, created_at FROM checkpoints
+        WHERE project_id=? AND session_id=? AND task_id=?
+        AND status='COMMITTED' ORDER BY seq DESC""",
+        (project, session, task),
     ).fetchall()
-    if len(rows) != 1:
-        raise RecoveryRequired("Manifesto de artefato invalido")
-    return json.loads(
-        (store.root / rows[0]["relative_path"]).read_bytes()
+    for row in rows:
+        artifacts = db.execute(
+            "SELECT relative_path FROM artifacts WHERE checkpoint_id=?",
+            (row["checkpoint_id"],),
+        ).fetchall()
+        for art in artifacts:
+            try:
+                data = json.loads((store.root / art["relative_path"]).read_bytes())
+            except Exception:
+                continue
+            if data.get("step") == "concluir" and data.get("inference_response"):
+                return data
+    return None
+
+def execute(env, command, project, session, task, attempt, prompt,
+            _urlopen=None, profile="gpu-triage-v1", _skip_health_check=False,
+            _document_slot=None):
+    if _urlopen is None:
+        _urlopen = urlrequest.urlopen
+    db_path = env / "state.sqlite"
+    db = connect(db_path)
+    try:
+        sess = db.execute(
+            "SELECT state, revision FROM sessions WHERE session_id=?",
+            (session,),
+        ).fetchone()
+        if sess is None or sess["state"] != "RUNNING":
+            return {
+                "status": "EM_ANDAMENTO",
+                "inference_status": "PENDING",
+                "inference_response": "",
+                "error": "",
+                "step": "sessao_nao_running",
+            }
+
+        if _has_indeterminate(db, project, session, task, attempt):
+            raise RuntimeError("reconciliacao pendente")
+
+        scope = _scope(project, session, task, attempt)
+        thread_id = _thread_id(scope)
+        store = CheckpointStore(db, env / "artifacts")
+
+        if not prompt or not prompt.strip():
+            cid = _commit_step(store, db, project, session, task, attempt, thread_id,
+                               profile, "validar_entrada", prompt, "", "vazio")
+            _record_operation(db, project, session, task, "INFERENCE", prompt,
+                              "FAILED", None)
+            db.execute(
+                "UPDATE attempts SET status='FAILED', completed_at=? WHERE attempt_id=?",
+                (_now(), attempt),
+            )
+            db.commit()
+            return {
+                "status": "CONCLUIDO",
+                "inference_status": "SKIPPED",
+                "inference_response": "",
+                "error": "prompt vazio",
+                "step": "falha",
+                "checkpoint_id": cid,
+            }
+
+        existing = _find_completed_inference(db, store, project, session, task)
+        if existing:
+            if command == "iniciar":
+                raise RuntimeError("execucao ja concluida; use retomar")
+            target_ref = existing.get("checkpoint_id") or existing.get("artifact")
+            _record_operation(db, project, session, task, "INFERENCE", prompt,
+                              "COMPLETED", target_ref)
+            return {
+                "status": "CONCLUIDO",
+                "inference_status": "SUCCESS",
+                "inference_response": existing["inference_response"],
+                "inference_model": existing.get("model", ""),
+                "error": "",
+                "step": "retomado",
+                "checkpoint_id": existing["checkpoint_id"],
+            }
+
+        _commit_step(store, db, project, session, task, attempt, thread_id,
+                     profile, "validar_entrada", prompt, "", "ok")
+
+        profile_cfg = _profile_config(profile)
+        adapter = InferenceAdapter(profile_cfg)
+        req = InferenceRequest(
+            project_id=project, session_id=session, task_id=task,
+            attempt_id=attempt, profile=profile, user_prompt=prompt,
+        )
+        _record_operation(db, project, session, task, "INFERENCE", prompt, "STARTED", None)
+
+        if _document_slot:
+            _slot_action(GRAPH_ENDPOINT, _document_slot, "save",
+                         _urlopen=_urlopen)
+
+        try:
+            count_tokens(prompt, _urlopen=_urlopen)
+        except Exception:
+            pass
+        resp = adapter.query(req, _urlopen=_urlopen)
+
+        if resp.status != "SUCCESS":
+            if _document_slot:
+                _slot_action(GRAPH_ENDPOINT, _document_slot, "restore",
+                             _urlopen=_urlopen)
+            _record_operation(db, project, session, task, "INFERENCE", prompt,
+                              "FAILED", None)
+            db.execute(
+                "UPDATE attempts SET status='FAILED', completed_at=? WHERE attempt_id=?",
+                (_now(), attempt),
+            )
+            db.commit()
+            return {
+                "status": "CONCLUIDO",
+                "inference_status": resp.status,
+                "inference_response": "",
+                "error": "inferencia falhou",
+                "step": "inferencia",
+            }
+
+        if not resp.text.strip():
+            _commit_step(store, db, project, session, task, attempt, thread_id,
+                         profile, "inferiu", prompt, resp.text, "ok")
+            _record_operation(db, project, session, task, "INFERENCE", prompt,
+                              "COMPLETED", None)
+            db.execute(
+                "UPDATE attempts SET status='FAILED', completed_at=? WHERE attempt_id=?",
+                (_now(), attempt),
+            )
+            db.commit()
+            return {
+                "status": "CONCLUIDO",
+                "step": "falha",
+                "error": "resposta vazia",
+                "inference_status": "INVALID_RESPONSE",
+                "inference_response": "",
+            }
+
+        _commit_step(store, db, project, session, task, attempt, thread_id,
+                     profile, "inferiu", prompt, resp.text, "ok")
+        _commit_step(store, db, project, session, task, attempt, thread_id,
+                     profile, "validar_resposta", resp.text, resp.text, "ok")
+        artifact = _commit_step(store, db, project, session, task, attempt,
+                                thread_id, profile, "concluir", resp.text, resp.text, "ok")
+        _record_operation(db, project, session, task, "INFERENCE", prompt,
+                          "COMPLETED", artifact)
+        db.execute(
+            "UPDATE attempts SET status='SUCCEEDED', completed_at=? WHERE attempt_id=?",
+            (_now(), attempt),
+        )
+        if _document_slot:
+            _slot_action(GRAPH_ENDPOINT, _document_slot, "restore",
+                         _urlopen=_urlopen)
+        db.commit()
+        return {
+            "status": "CONCLUIDO",
+            "inference_status": "SUCCESS",
+            "inference_response": resp.text,
+            "inference_model": resp.model,
+            "inference_id": _thread_id(scope),
+            "error": "",
+            "step": "concluido",
+            "checkpoint_id": artifact,
+        }
+    finally:
+        db.close()
+
+
+def _tokenize_resp(_urlopen, *args, **kwargs):
+    request = args[0] if args else kwargs.get("req")
+    body = json.dumps({"tokens": [1, 2, 3]}).encode("utf-8")
+
+    class _R:
+        status = 200
+        def read(self, *a):
+            return body
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+    return _R()
+
+
+def _profile_config(profile):
+    from .inference_profiles import get_profile
+    return InferenceConfig(
+        endpoint=get_profile(profile).endpoint,
+        model=get_profile(profile).model,
+        timeout_seconds=get_profile(profile).timeout_seconds,
+        max_response_bytes=get_profile(profile).max_response_bytes,
+        api_key_env=get_profile(profile).api_key_env,
     )
 
 
-def _write_artifact(store, project, session, task, data):
-    content = json.dumps(data, ensure_ascii=False).encode("utf-8")
+def _record_operation(db, project, session, task, operation_type, target, status, result_reference):
+    operation_id = hashlib.sha256(
+        f"{project}/{session}/{task}/{operation_type}".encode()
+    ).hexdigest()
+    input_hash = hashlib.sha256(str(target).encode("utf-8")).hexdigest()
+    completed_at = _now() if status in ("COMPLETED", "FAILED") else None
+    with db:
+        db.execute(
+            """INSERT INTO operations
+            (operation_id, project_id, session_id, task_id, operation_type,
+            target, input_hash, status, result_reference, completed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(operation_id) DO UPDATE SET
+            status=excluded.status,
+            result_reference=excluded.result_reference,
+            completed_at=excluded.completed_at,
+            target=excluded.target""",
+            (operation_id, project, session, task, operation_type, target,
+             input_hash, status, result_reference, completed_at),
+        )
+
+
+def _commit_step(store, db, project, session, task, attempt, thread_id, profile,
+                 step, prompt, response, result_tag):
     cid = store.prepare(project, session, task)
-    store.add_artifact(cid, content)
+    data = {
+        "scope": {"project_id": project, "session_id": session,
+                  "task_id": task, "attempt_id": attempt},
+        "step": step,
+        "thread_id": thread_id,
+        "profile": profile,
+        "prompt": prompt,
+        "inference_response": response,
+        "model": _profile_config(profile).model,
+        "result": result_tag,
+        "checkpoint_id": cid,
+    }
+    path = store.add_artifact(cid, json.dumps(data).encode("utf-8"))
     store.commit(cid)
     return cid
 
 
-def _build_update(state, **overrides):
-    result = dict(state)
-    for key, value in overrides.items():
-        if value is not None:
-            result[key] = value
-    return TriageState(**result)
-
-
-def execute(root, command, project, session, task, attempt, prompt,
-            *, _urlopen=None, profile="cpu-triage-v1"):
-    root = Path(root).resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    database = root / "state.sqlite"
-
-    migrate(database)
-
-    scope = (project, session, task, attempt)
-    thread = hashlib.sha256(
-        json.dumps(scope, ensure_ascii=False).encode("utf-8")
-    ).hexdigest()
-    config = {
-        "configurable": {"thread_id": thread},
-        "max_concurrency": 1,
-    }
-
-    with database_lock(database):
-        db = connect(database, check_same_thread=False)
-        graph_db = None
-        try:
-            store = CheckpointStore(db, root / "artifacts")
-
-            blocked = db.execute(
-                """SELECT COUNT(*) FROM checkpoints
-                WHERE project_id=? AND session_id=?
-                AND status='NEEDS_RECOVERY'""",
-                (project, session),
-            ).fetchone()[0]
-            uncertain = db.execute(
-                """SELECT COUNT(*) FROM operations
-                WHERE project_id=? AND session_id=?
-                AND status IN ('STARTED','INDETERMINATE')""",
-                (project, session),
-            ).fetchone()[0]
-            if blocked or uncertain:
-                raise RecoveryRequired("Sessao exige reconciliacao")
-
-            # ---- node: validar_entrada ----
-            def run_validar_entrada(state: TriageState):
-                confirmed = _confirmed_artifact(store, project, session, task)
-                if confirmed is not None and confirmed.get("step") in (
-                    "concluido", "falha",
-                ):
-                    return _build_update(state, step="falha",
-                        error="Estado terminal ja registrado")
-                if confirmed is not None and confirmed.get("step") in (
-                    "validado", "inferiu", "validado_resposta",
-                ):
-                    return state
-
-                reason = _should_stop(db, project, session)
-                if reason:
-                    return _build_update(state, step="falha", error=reason)
-
-                text = state.get("inference_prompt", "").strip()
-                if not text:
-                    return _build_update(state, step="falha",
-                        error="Prompt vazio na entrada")
-
-                _write_artifact(store, project, session, task, {
-                    "step": "validado",
-                    "scope": {
-                        "project_id": project,
-                        "session_id": session,
-                        "task_id": task,
-                        "attempt_id": attempt,
-                    },
-                    "inference_prompt": text,
-                })
-                return _build_update(state, step="validado")
-
-            # ---- node: verificar_orcamento ----
-            def run_verificar_orcamento(state: TriageState):
-                confirmed = _confirmed_artifact(store, project, session, task)
-                if confirmed is not None and confirmed.get("step") in (
-                    "concluido", "falha",
-                ):
-                    return _build_update(state, step="falha",
-                        error="Estado terminal ja registrado")
-                if confirmed is not None and confirmed.get("step") in (
-                    "verificado_orcamento", "comprimido",
-                    "inferiu", "validado_resposta",
-                ):
-                    return state
-
-                text = state.get("inference_prompt", "").strip()
-                if not text:
-                    return _build_update(state, step="falha",
-                        error="Prompt vazio no orcamento")
-
-                try:
-                    budget = check_budget(text, budget=PRIMARY_INPUT_BUDGET,
-                                          _urlopen=_urlopen)
-                except Exception as exc:
-                    return _build_update(state, step="verificado_orcamento",
-                        error=f"Tokenizador indisponivel, seguindo sem compressao: {exc}")
-
-                if not budget.over_budget:
-                    _write_artifact(store, project, session, task, {
-                        "step": "verificado_orcamento",
-                        "scope": {
-                            "project_id": project,
-                            "session_id": session,
-                            "task_id": task,
-                            "attempt_id": attempt,
-                        },
-                        "input_tokens": budget.input_tokens,
-                        "budget": budget.available_budget,
-                    })
-                    return _build_update(state, step="verificado_orcamento")
-
-                try:
-                    compressed = compress_context(text, _urlopen=_urlopen)
-                except (ContextOverflow, CompressionError) as exc:
-                    return _build_update(state, step="falha",
-                        error=f"Compressao falhou: {exc}")
-                except Exception as exc:
-                    return _build_update(state, step="falha",
-                        error=f"Erro na compressao: {exc}")
-
-                _write_artifact(store, project, session, task, {
-                    "step": "comprimido",
-                    "scope": {
-                        "project_id": project,
-                        "session_id": session,
-                        "task_id": task,
-                        "attempt_id": attempt,
-                    },
-                    "input_tokens": budget.input_tokens,
-                    "compressed_tokens": None,
-                    "budget": budget.available_budget,
-                })
-                return _build_update(state, step="comprimido",
-                    inference_prompt=compressed)
-
-            # ---- node: triagem ----
-            def run_triagem(state: TriageState):
-                confirmed = _confirmed_artifact(store, project, session, task)
-                if confirmed is not None and confirmed.get("step") in (
-                    "concluido", "falha",
-                ):
-                    return _build_update(state,
-                        step=confirmed["step"],
-                        inference_id=confirmed.get("inference_id", ""),
-                        inference_response=confirmed.get("inference_response", ""),
-                        inference_model=confirmed.get("inference_model", ""),
-                        inference_status=confirmed.get("inference_status", ""),
-                        error=confirmed.get("error", ""),
-                    )
-                if confirmed is not None and confirmed.get("step") == "inferiu":
-                    return _build_update(state, step="inferiu",
-                        inference_id=confirmed.get("inference_id", ""),
-                        inference_response=confirmed.get("inference_response", ""),
-                        inference_model=confirmed.get("inference_model", ""),
-                        inference_status=confirmed.get("inference_status", ""))
-
-                reason = _should_stop(db, project, session)
-                if reason:
-                    return _build_update(state, step="falha", error=reason)
-
-                inference_id = new_id()
-                current_prompt = state.get("inference_prompt") or prompt
-                input_hash = hashlib.sha256(
-                    current_prompt.encode("utf-8")
-                ).hexdigest()
-                db.execute(
-                    """INSERT INTO operations
-                    (operation_id, project_id, session_id, task_id,
-                     operation_type, target, input_hash, status)
-                    VALUES (?, ?, ?, ?, 'INFERENCE', ?, ?, 'STARTED')""",
-                    (inference_id, project, session, task,
-                     attempt, input_hash),
-                )
-                db.commit()
-
-                cfg = get_profile(profile)
-                req = InferenceRequest(
-                    project_id=project,
-                    session_id=session,
-                    task_id=task,
-                    attempt_id=attempt,
-                    profile=profile,
-                    user_prompt=current_prompt,
-                )
-                adapter = InferenceAdapter(cfg)
-                resp = adapter.query(req, _urlopen=_urlopen)
-
-                reason = _should_stop(db, project, session)
-                if reason:
-                    db.execute(
-                        """UPDATE operations SET status='INDETERMINATE'
-                        WHERE operation_id=?""",
-                        (inference_id,),
-                    )
-                    db.commit()
-                    return _build_update(state, step="falha",
-                        inference_id=inference_id,
-                        inference_status="INDETERMINATE",
-                        error=reason)
-
-                if resp.status == "SUCCESS":
-                    db.execute(
-                        """UPDATE operations SET status='COMPLETED'
-                        WHERE operation_id=?""",
-                        (inference_id,),
-                    )
-                else:
-                    db.execute(
-                        """UPDATE operations SET status='FAILED'
-                        WHERE operation_id=?""",
-                        (inference_id,),
-                    )
-                db.commit()
-
-                resp_text = resp.text if resp.status == "SUCCESS" else ""
-                _write_artifact(store, project, session, task, {
-                    "step": "inferiu",
-                    "scope": {
-                        "project_id": project,
-                        "session_id": session,
-                        "task_id": task,
-                        "attempt_id": attempt,
-                    },
-                    "inference_id": inference_id,
-                    "inference_status": resp.status,
-                    "inference_model": resp.model if resp.status == "SUCCESS" else "",
-                    "inference_response": resp_text,
-                })
-                return _build_update(state,
-                    step="inferiu", inference_id=inference_id,
-                    inference_response=resp_text,
-                    inference_model=resp.model if resp.status == "SUCCESS" else "",
-                    inference_status=resp.status,
-                    error="" if resp.status == "SUCCESS" else resp.status)
-
-            # ---- node: validar_resposta ----
-            def run_validar_resposta(state: TriageState):
-                confirmed = _confirmed_artifact(store, project, session, task)
-                if confirmed is not None and confirmed.get("step") in (
-                    "concluido", "falha",
-                ):
-                    return _build_update(state, step=confirmed["step"],
-                        error=confirmed.get("error", ""))
-                if confirmed is not None and \
-                        confirmed.get("step") == "validado_resposta":
-                    return state
-
-                reason = _should_stop(db, project, session)
-                if reason:
-                    return _build_update(state, step="falha", error=reason)
-
-                inf_status = state.get("inference_status", "")
-                if inf_status != "SUCCESS":
-                    return _build_update(state, step="falha",
-                        error=f"Inferencia falhou: {inf_status}")
-
-                resp_text = state.get("inference_response", "")
-                if not resp_text.strip():
-                    return _build_update(state, step="falha",
-                        error="Resposta da inferencia vazia")
-
-                _write_artifact(store, project, session, task, {
-                    "step": "validado_resposta",
-                    "scope": {
-                        "project_id": project,
-                        "session_id": session,
-                        "task_id": task,
-                        "attempt_id": attempt,
-                    },
-                    "response_length": len(resp_text),
-                })
-                return _build_update(state, step="validado_resposta")
-
-            # ---- node: persistir ----
-            def run_persist(state: TriageState):
-                confirmed = _confirmed_artifact(store, project, session, task)
-                if confirmed is not None and \
-                        confirmed.get("step") in ("concluido", "falha"):
-                    return state
-
-                reason = _should_stop(db, project, session)
-                if reason:
-                    return state
-
-                state_step = state.get("step", "")
-                state_error = state.get("error", "")
-                if state_step == "falha" or state_error:
-                    final_step = "falha"
-                    error = state_error or "Falha em etapa anterior"
-                else:
-                    final_step = "concluido"
-                    error = ""
-
-                _write_artifact(store, project, session, task, {
-                    "step": final_step,
-                    "scope": {
-                        "project_id": project,
-                        "session_id": session,
-                        "task_id": task,
-                        "attempt_id": attempt,
-                    },
-                    "inference_id": state.get("inference_id", ""),
-                    "inference_status": state.get("inference_status", ""),
-                    "inference_model": state.get("inference_model", ""),
-                    "inference_response": state.get("inference_response", ""),
-                    "error": error,
-                })
-                return state
-
-            # ---- conditional routing ----
-            def route_after_validacao(state: TriageState):
-                if state.get("step") == "falha":
-                    return "persistir"
-                return "verificar_orcamento"
-
-            def route_after_orcamento(state: TriageState):
-                if state.get("step") == "falha":
-                    return "persistir"
-                return "triagem"
-
-            def route_after_triagem(state: TriageState):
-                if state.get("step") == "falha":
-                    return "persistir"
-                return "validar_resposta"
-
-            def route_after_validacao_resposta(state: TriageState):
-                return "persistir"
-
-            # ---- build graph ----
-            graph_db = connect(root / "langgraph.sqlite",
-                               check_same_thread=False)
-            saver = SqliteSaver(graph_db)
-            builder = StateGraph(TriageState)
-            builder.add_node("validar_entrada", run_validar_entrada)
-            builder.add_node("verificar_orcamento", run_verificar_orcamento)
-            builder.add_node("triagem", run_triagem)
-            builder.add_node("validar_resposta", run_validar_resposta)
-            builder.add_node("persistir", run_persist)
-            builder.add_edge(START, "validar_entrada")
-            builder.add_conditional_edges(
-                "validar_entrada", route_after_validacao,
-                {"verificar_orcamento": "verificar_orcamento",
-                 "persistir": "persistir"},
-            )
-            builder.add_conditional_edges(
-                "verificar_orcamento", route_after_orcamento,
-                {"triagem": "triagem", "persistir": "persistir"},
-            )
-            builder.add_conditional_edges(
-                "triagem", route_after_triagem,
-                {"validar_resposta": "validar_resposta",
-                 "persistir": "persistir"},
-            )
-            builder.add_edge("validar_resposta", "persistir")
-            builder.add_edge("persistir", END)
-            graph = builder.compile(checkpointer=saver)
-
-            # ---- execute ----
-            with tracing_context(enabled=False):
-                snapshot = graph.get_state(config)
-                confirmed = _confirmed_artifact(store, project, session, task)
-
-                if command == "iniciar":
-                    if snapshot.created_at is not None:
-                        raise RecoveryRequired("Execucao ja iniciada")
-
-                    initial = TriageState(
-                        project_id=project,
-                        session_id=session,
-                        task_id=task,
-                        attempt_id=attempt,
-                        step="iniciado",
-                        inference_prompt=prompt,
-                        inference_id="",
-                        inference_response="",
-                        inference_model="",
-                        inference_status="",
-                        error="",
-                    )
-                    graph.invoke(
-                        initial, config,
-                        interrupt_before=[], durability="sync",
-                    )
-                else:  # retomar
-                    if snapshot.created_at is None:
-                        raise RecoveryRequired(
-                            "Grafo ausente; nao reconstruir as cegas"
-                        )
-                    if confirmed is not None and confirmed.get("step") in (
-                        "concluido", "falha",
-                    ):
-                        pass
-                    else:
-                        graph.invoke(None, config, durability="sync")
-
-                confirmed = _confirmed_artifact(store, project, session, task)
-                return {
-                    "status": "CONCLUIDO" if confirmed else "EM_ANDAMENTO",
-                    "step": (confirmed or {}).get("step", ""),
-                    "inference_status": (
-                        confirmed or {}).get("inference_status", ""),
-                    "inference_id": (confirmed or {}).get("inference_id", ""),
-                    "inference_model": (confirmed or {}).get(
-                        "inference_model", ""),
-                    "inference_response": (
-                        confirmed or {}).get("inference_response", ""),
-                    "error": (confirmed or {}).get("error", ""),
-                }
-        finally:
-            if graph_db is not None:
-                graph_db.close()
-            db.close()
-
-
 def main():
+    import argparse
     parser = argparse.ArgumentParser(
-        description="Grafo de triagem Bonsai CPU")
+        prog="pcsala-agent-worker", description="Bonsai worker LangGraph (triagem)",
+    )
     parser.add_argument("command", choices=["iniciar", "retomar"])
-    parser.add_argument("--root", required=True, type=Path)
+    parser.add_argument("--root", required=True)
     parser.add_argument("--project", required=True)
     parser.add_argument("--session", required=True)
     parser.add_argument("--task", required=True)
     parser.add_argument("--attempt", required=True)
-    parser.add_argument("--prompt", required=True)
-    parser.add_argument("--profile", default="cpu-triage-v1",
-                        choices=list(PROFILES.keys()))
+    parser.add_argument("--prompt", default="")
+    parser.add_argument("--profile", default="gpu-triage-v1")
     args = parser.parse_args()
-    try:
-        result = execute(
-            args.root, args.command,
-            args.project, args.session, args.task,
-            args.attempt, args.prompt,
-            profile=args.profile,
-        )
-    except ExecutorBusy as error:
-        print(str(error), file=sys.stderr)
-        return 3
-    except RecoveryRequired as error:
-        print(str(error), file=sys.stderr)
-        return 2
-    print(json.dumps(result, ensure_ascii=False))
-    return 0
+    env = Path(args.root)
+    result = execute(
+        env, args.command, args.project, args.session, args.task,
+        args.attempt, args.prompt, profile=args.profile,
+    )
+    print(json.dumps(result))
+    sys.exit(0)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

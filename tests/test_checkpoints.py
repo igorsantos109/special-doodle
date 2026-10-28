@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from pcsala_agent.database import connect, initialize
 from pcsala_agent.checkpoints import CheckpointStore, RecoveryRequired
+from pcsala_agent.database import connect, initialize
 
 MIGRATION = Path(__file__).resolve().parents[1] / "migrations/001_checkpoints.sql"
 

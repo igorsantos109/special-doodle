@@ -1,56 +1,87 @@
 # PC-SALA Agent
 
-Protótipo de programação agêntica híbrida, conforme o handoff 1.0.
-Não é uma plataforma de produção.
+Hybrid agentic programming prototype (handoff 1.0). Not production-grade.
 
-## Estado consolidado
-
-Última suíte apresentada em 2026-10-19:
-121 testes aprovados, 13 avisos, em 10,12 segundos.
-A consolidação não executa novamente os testes.
-
-## Implementado
-
-- SQLite, checkpoints e artefatos com SHA-256.
-- Integração simulada com LangGraph.
-- Migrações versionadas.
-- Controle persistente de sessões, tentativas, pausa e auditoria.
-- Classificação de interrupções sem repetição automática.
-- Encerramento lógico DRAINING -> CHECKPOINTING -> STOPPED.
-- Contrato estrito de pedidos e resultados.
-- Planejador determinístico, sem execução de comandos.
-
-## Ensaios operacionais separados da suíte
-
-- Bubblewrap iniciado como pcsala-executor.
-- Workspace gravável, sentinela externo não visível e /usr em leitura.
-- Namespace de rede separado e loopback do hospedeiro inacessível.
-- Cgroups: CPU, memória, swap, tarefas e duração.
-- Bubblewrap e cgroups combinados, mantendo NoNewPrivileges.
-
-Os ensaios usam dados artificiais. Não comprovam segurança universal.
-
-## Executar a suíte
+## Quick start
 
 ```bash
-PYTHONPATH="$PWD/src" PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
-    .venv/bin/python -m pytest -q tests
+python3 -m venv .venv && .venv/bin/pip install -r requirements.lock
+PYTHONPATH="$PWD/src" .venv/bin/python -m pytest -q tests
+./pcsala health
 ```
 
-## Limitações e próximo trabalho
+## CLI
 
-- Nenhum executor privilegiado habilitado.
-- Nenhuma regra de sudo instalada para o agente.
-- Preparação segura de diretórios ainda pendente.
-- Tetos de saída e armazenamento apenas declarados no perfil.
-- Reconciliação administrativa e vínculos completos ainda pendentes.
-- Sem execução de repositórios reais ou código não confiável.
-- Sem modelos, API externa ou painel integrados por este projeto.
-- Sem garantia universal de execução exatamente uma vez.
-- Checkpoints, arquivos e Git não formam uma transação conjunta.
+```text
+pcsala enqueue --prompt "..." [--profile gpu-triage-v1] [--idempotency-key K]
+pcsala document --path <file> [--profile gpu-triage-v1]
+pcsala document-deps
+pcsala list [--status QUEUED|RESERVED|COMPLETED|FAILED|CANCELLED]
+pcsala status <id>
+pcsala cancel <id>
+pcsala reconcile
+pcsala health
+pcsala backup
+pcsala models {list,status,health,start,stop,switch,vram,operation}
+```
 
-Não executar diretamente como root um plano recebido do orquestrador.
-O helper futuro deverá validar o pedido e usar código/perfis confiáveis.
+## Models (GPU is exclusive for big models — one at a time)
 
-Registros locais, bancos e ambiente virtual não integram esta cópia
-do código. Consulte PROJECT_STATE.md para referências operacionais.
+| Modelo | Porta | Ctx | Gen tok/s | Notas |
+|---|---|---|---|---|
+| Bonsai 27B GPU + MTP | 8080 | 64K | 28-48 | Primario, exclusivo (gpu-slot-1) |
+| Bonsai 4B GPU | 8093 | 64K | — | Residente (nao habilitado no boot) |
+| Bonsai 9B CPU | 8090 | 32K | 6.08 | Sem MTP |
+| Laguna XS 2.1 CPU | 8091 | — | — | Desativado (libera RAM) |
+| Laguna XS 2.1 GPU | 8082 | 128K | ~47 | Build Pascal; exclusivo (gpu-slot-1) |
+| Ornith 35B GPU | 8092 | — | ~40 | PrismML runtime; exclusivo (gpu-slot-1) |
+
+Apenas o Bonsai 4B fica residente na GPU. O Bonsai 27B, Laguna GPU e
+Ornith compoem o grupo exclusivo `gpu-slot-1`: apenas um fica carregado
+por vez. O `switch` aplica-se apenas a modelos desse grupo.
+
+`pcsala models vram` mostra a VRAM usada por modelo e a folga (nvidia-smi).
+`start` e `switch` recusam o arranque se a folga for menor que 1,5 GB.
+
+Switch: `./pcsala models switch <model-id>` (e.g. `bonsai-27b-gpu` ou
+`laguna-xs-2.1-gpu`).
+
+## Architecture
+
+- SQLite persistence, versioned migrations (`migrations/`), checkpoints with SHA-256 artifacts.
+- Persistent sessions, attempts, pause/resume, audit trail.
+- Strict request/result contracts; deterministic planner (no command execution).
+- Interrupt classification without automatic retry; logical shutdown DRAINING -> CHECKPOINTING -> STOPPED.
+- Continuous worker + persistent task queue; reconciliation of RESERVED tasks.
+- Model manager for exclusive GPU switching (reserve_engine persisted in SQLite, CUDA_VISIBLE_DEVICES, lock em /run/pcsala/).
+- Document flow (pdfminer optional) and output collection/probing.
+- Slot save/restore de KV para documentos longos (desativado por default; ativar apenas apos validar MROPE num slot descartavel).
+
+## Operations
+
+Services: `bonsai2-27b.service` (8080), `pcsala-worker.service`, optional `bonsai-4b-gpu.service` (8093, residente, nao no boot), `laguna-gpu.service` (8082), `ornith.service` (8092).
+
+```bash
+sudo systemctl {start|stop|status} bonsai2-27b.service pcsala-worker.service
+./pcsala health
+./pcsala reconcile
+./pcsala backup
+./pcsala models list
+./pcsala models vram
+```
+
+## API policy
+
+API required, API key not. Services accept `Authorization` but ignore it. Network restricted via ufw + nft to 192.168.0.0/16.
+
+## Limits
+
+- No privileged executor enabled; no sudo rules for agent.
+- Safe directory preparation pending.
+- Output/storage caps declared in profile only.
+- No universal exactly-once guarantee; checkpoints/files/Git are not a single transaction.
+- Do not run an orchestrator plan directly as root.
+
+## Docs
+
+Detailed guides: `guias/` (GUIA_MESTRE, MANUAL_GESTOR_API, TUTORIAL_GESTOR, diagnostics). State: `PROJECT_STATE.md`. Recovery procedure: `CONTINUITY.md`.
