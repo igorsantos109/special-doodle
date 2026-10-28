@@ -74,7 +74,13 @@ Apenas o Bonsai 4B fica residente na GPU.
   1098 -> 817 -> 537 -> 399 tok/s. Extrap. 262144: prefill 13-15 min,
   geracao 15-25 tok/s.
 - **Viabilidade do contexto maximo**: memoria OK (11,3 de 23 GB), tempo
-  nao. Recomendado <=32K interactivo; 64-128K para ingestao de fundo.
+    nao. Recomendado <=32K interactivo; 64-128K para ingestao de fundo.
+  - **Contexto declarado no cliente**: `contextWindow: 66000` (dsh/kilocode)
+    desde 2026-10-28, com `maxTokens: 4096` -> 70096 < 262144 do servidor.
+    Verificado com 66755 tokens reais: HTTP 200, prefill 81,7 s (56,2 tok/s)
+    e geracao 56,2 tok/s. Aos 32K ainda sao 73,3 tok/s e prefill 30 s: a
+    diferenca e' latencia, nao capacidade. Regra de compactacao: 66000-4096
+    = 61904 tok de prompt.
 - Regras de uso: `pcsala enqueue --profile nemotron-ternary-v1`; trocar
   com `ia solo nemotron` ou `./pcsala models switch nemotron-3.5-30b-gpu`
 - Reproduzir: `scripts/bench_nemotron.py`, `scripts/bench_contexto_max.py`
