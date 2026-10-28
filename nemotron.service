@@ -8,6 +8,17 @@
 # A P40 (24 GB) nao comporta os dois: modelo registado com exclusive_group
 # gpu-slot-1, igual ao bonsai-27b, para o coordinator trocar entre eles.
 #
+# ACESSO LAN (dsh em 192.168.1.101): --host 0.0.0.0, como o bonsai faz
+# pelo drop-in mtp.conf. Sem isto so escuta em 127.0.0.1 e o dsh nao
+# alcanca o endpoint. A porta tem de estar incluida em:
+#   /etc/pcsala-bonsai-api.nft  (nft inet pcsala_api)
+#   ufw allow from 192.168.0.0/16 to any port 8083 proto tcp
+# Verificado 2026-10-28: 127.0.0.1 inacessivel da LAN sem estas pecas.
+#
+# Sem --no-jinja: com jinja desligado o llama.cpp recusa "tools" com
+#   HTTP 500 "tools param requires --jinja flag"
+# (mesmo problema do 8090). Agentes (dsh/kilocode) precisam de tools.
+#
 # BINARIO: /home/igor/opt/llama-cpp-nemotron/build/bin/llama-server
 #   cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=61 \
 #         -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc-13 \
@@ -41,7 +52,7 @@ Group=igor
 WorkingDirectory=/home/igor
 ExecStart=/home/igor/opt/llama-cpp-nemotron/build/bin/llama-server \
     -m /home/igor/models/ternary-nemotron-3.5-30b-a3b/Ternary-Nemotron-3.5-Lightning-30B-A3B-GGUF.gguf \
-    --host 127.0.0.1 \
+    --host 0.0.0.0 \
     --port 8083 \
     -c 262144 \
     -np 1 \
@@ -51,7 +62,7 @@ ExecStart=/home/igor/opt/llama-cpp-nemotron/build/bin/llama-server \
     --cache-type-k q8_0 \
     --cache-type-v q8_0 \
     -t 8 \
-    --no-jinja \
+    --reasoning off \
     --threads-http 4
 Restart=on-failure
 RestartSec=5s
