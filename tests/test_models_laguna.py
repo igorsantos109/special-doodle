@@ -44,6 +44,7 @@ class TestLagunaProfileRegistration:
         assert "cpu-triage-v1" in PROFILES
         assert list(PROFILES.keys()) == [
             "cpu-triage-v1", "gpu-triage-v1", "laguna-programming-v1",
+            "nemotron-ternary-v1",
         ]
 
 
@@ -171,6 +172,7 @@ class TestLagunaModelRegistry:
             "bonsai-9b-cpu",
             "laguna-xs-2.1-cpu",
             "laguna-xs-2.1-gpu",
+            "nemotron-3.5-30b-gpu",
             "ornith-35b-gpu",
         }
 

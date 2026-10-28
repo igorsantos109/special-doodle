@@ -137,7 +137,12 @@ class TestHybridPolicy:
         reg = ModelRegistry()
         exclusive = reg.exclusive_models()
         ids = {m.model_id for m in exclusive}
-        assert ids == {"bonsai-27b-gpu", "laguna-xs-2.1-gpu", "ornith-35b-gpu"}
+        assert ids == {
+            "bonsai-27b-gpu",
+            "laguna-xs-2.1-gpu",
+            "nemotron-3.5-30b-gpu",
+            "ornith-35b-gpu",
+        }
         # 4B é residente, não exclusivo.
         assert "bonsai-4b-gpu" not in ids
 

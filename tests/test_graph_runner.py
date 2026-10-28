@@ -148,13 +148,25 @@ class TestWorkerHealthCheck:
             urllib.request.urlopen = original
 
     def test_worker_health_check_servidor_indisponivel_retorna_retry(self, tmp_path):
+        import urllib.request
         _make_env(tmp_path)
-        result = worker_execute(
-            tmp_path, "iniciar", "p", "s", "t", "a", "prompt",
-            _urlopen=lambda *a, **kw: _response(
-                body=_chat_completion("resposta")
-            ),
-        )
+        original = urllib.request.urlopen
+
+        def failing_open(*a, **kw):
+            raise ConnectionRefusedError("Servidor indisponivel no teste")
+
+        # O endpoint real pode estar a servir nesta maquina (8080/8090);
+        # recusar a ligacao explicitamente torna o teste deterministico.
+        urllib.request.urlopen = failing_open
+        try:
+            result = worker_execute(
+                tmp_path, "iniciar", "p", "s", "t", "a", "prompt",
+                _urlopen=lambda *a, **kw: _response(
+                    body=_chat_completion("resposta")
+                ),
+            )
+        finally:
+            urllib.request.urlopen = original
         # Sem _skip_health_check: health check falha (sem servidor real),
         # deve retornar RETRY, nunca CONCLUIDO.
         assert result["status"] == "RETRY"
