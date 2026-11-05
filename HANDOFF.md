@@ -21,19 +21,17 @@ Incorporar futuramente uma Tesla P100 (16 GB) ao pcsala, ao lado da P40, com poo
 Plano proposto; nada executado na máquina. Repositório lido apenas via GitHub (PROJECT_STATE.md de 2026-10-28, CONTINUITY.md, README.md, listagens).
 
 ## Plano e progresso
-| Passo | Descrição | Estado | Resultado/verificação |
-|---|---|---|---|
-| F0 | Inventário: gestor ia, GPUs, portas, serviços, src/pcsala_agent | PENDENTE | aguarda saída dos comandos de leitura |
-| F1 | Ramo feat/roteador e pytest de base | PENDENTE | exige autorização |
-| F2 | configs/pools.toml (alvo, porta, GPU, max_inflight) | PENDENTE | |
-| F3 | llama-bench por GPU | PENDENTE | exige autorização (parar modelos) |
-| F4 | router.py com regras simples | PENDENTE | |
-| F5 | Endpoint único /v1/chat/completions em 127.0.0.1 | PENDENTE | exige autorização (nova unidade) |
-| F6 | Concorrência por pool e fallback | PENDENTE | exige autorização |
-| F7 | Quality gate na CPU (Bonsai 2 4B ou 2B, a decidir por teste) | PENDENTE | exige autorização (download) |
-| F8 | Logs estruturados no SQLite | PENDENTE | nova migração |
-| F9 | Implantação: unidade independente, sem boot automático | PENDENTE | exige autorização |
-| F10 | P100: build separada com patches sm60 (condicional à presença física) | BLOQUEADO | placa ainda não instalada |
+- F0: Inventário: gestor ia, GPUs, portas, serviços, src/pcsala_agent — PENDENTE.
+- F1: Ramo feat/roteador e pytest de base — PENDENTE (exige autorização).
+- F2: configs/pools.toml (alvo, porta, GPU, max_inflight) — PENDENTE.
+- F3: llama-bench por GPU — PENDENTE (exige autorização para parar modelos).
+- F4: router.py com regras simples — PENDENTE.
+- F5: Endpoint único /v1/chat/completions em 127.0.0.1 — PENDENTE (exige autorização para nova unidade).
+- F6: Concorrência por pool e fallback — PENDENTE (exige autorização).
+- F7: Quality gate na CPU (Bonsai 2 4B ou 2B, a decidir por teste) — PENDENTE (exige autorização para download).
+- F8: Logs estruturados no SQLite — PENDENTE (nova migração).
+- F9: Implantação: unidade independente, sem boot automático — PENDENTE (exige autorização).
+- F10: P100: build separada com patches sm60 (condicional à presença física) — BLOQUEADO (placa ainda não instalada).
 
 ## Ações executadas
 - Nenhuma alteração no pc-sala. Apenas este registro.
@@ -79,11 +77,21 @@ Execução do plano de debugger (PC-SALA Agent 1.0.1rc1):
 
 | Item | Resultado |
 |---|---|
-| pytest -q -m 'not gpu' tests | 562 passou, 0 falhou |
+| pytest -q -m 'not gpu' tests | 562 passou, 0 falhou (câpia de entrega); 565 passou no repositório Git pai após `pip install -e '.[dev]'` no .venv local |
 | ruff check (inference_adapter.py, models_cli.py, test_debugger_falhas.py) | limpo |
 | compileall src | OK |
 
-Escopo: cópia na nuvem; sem push, sem pc-sala, sem instalação de serviços ou modelos.
+### 2. Envio ao GitHub (2026-11-05, autorização explícita do Igor)
+
+- Repositório: `igorsantos109/ialocalagent` (remote origin), branch nova `fix/rc1-correcoes`.
+- Commit `64a1736` — correções R01–R09 e extras na candidata 1.0.1rc1 (12 arquivos, staging preexistente).
+- Commit `b8807bf` — instrumentação de logging + 22 testes de injeção de falha + este HANDOFF (4 arquivos).
+- Push concluído: `origin/fix/rc1-correcoes` criada. PR sugerido: https://github.com/igorsantos109/ialocalagent/pull/new/fix/rc1-correcoes
+- Verificação antes do push: 565 testes passaram, ruff limpo, compileall OK no repo pai.
+- Não enviados (intencional): `Versão nova/` (cópia de entrega com .venv/dist/evidence) e `src/pc_sala_agent.egg-info/` (artefato do pip install -e).
+- Correção de ambiente no repo pai: `.venv` sem o pacote instalado fazia 10 testes de subprocess falharem com ModuleNotFoundError; resolvido com `pip install -e '.[dev]'` (não é mudança de código).
+
+Escopo: cópia na nuvem; envio ao GitHub autorizado pelo Igor (branch fix/rc1-correcoes); sem alteração no pc-sala, sem instalação de serviços ou modelos.
 Alterações previstas: adaptador HTTP, coordenação/reservas, guarda CPU/GPU, fila e testes.
 Sem interrupção de geração. Reversão: patch/commits locais reversíveis; código original preservado em Git.
 Não modificar CLI pública, estados persistidos, schema de banco, unidades, portas ou binários.

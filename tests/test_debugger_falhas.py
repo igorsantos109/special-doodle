@@ -146,11 +146,12 @@ class TestModeloFalhas:
         def systemctl(action, unit):
             calls.append((action, unit))
             return 1
-        monkeypatch.setattr("pcsala_agent.model_manager._unit_inactive", lambda u: True)
+        monkeypatch.setattr("pcsala_agent.models_cli._unit_inactive", lambda u: True)
         cli = ModelsCLI(
             coordinator=coord, systemctl=systemctl,
             skip_vram_guard=True, lock_dir=tmp_path / "locks",
         )
+        cli._is_model_running = lambda m: False
         assert cli.run(["start", "bonsai-27b-gpu"]) == 1
         assert calls == [("start", "bonsai2-27b.service")]
 
@@ -165,12 +166,12 @@ class TestModeloFalhas:
         coord, _ = self._coord(tmp_path)
         def systemctl(action, unit):
             return 0
-        monkeypatch.setattr("pcsala_agent.model_manager._unit_active", lambda u: True)
-        monkeypatch.setattr("pcsala_agent.model_manager._unit_inactive", lambda u: False)
+        monkeypatch.setattr("pcsala_agent.models_cli._unit_inactive", lambda u: False)
         cli = ModelsCLI(
             coordinator=coord, systemctl=systemctl,
             skip_vram_guard=True, lock_dir=tmp_path / "locks",
         )
+        cli._is_model_running = lambda m: False
         monkeypatch.setattr(
             "pcsala_agent.model_manager.ModelCoordinator.wait_for_health",
             lambda self, model_id, timeout=None: False,
@@ -273,7 +274,7 @@ class TestFilaFalhas:
         with ThreadPoolExecutor(max_workers=2) as pool:
             assert sum(pool.map(lambda _: run(), [0, 1])) == 1
 
-    def update_nao_sobrescreve_estado_terminal(self, tmp_path):
+    def test_update_nao_sobrescreve_estado_terminal(self, tmp_path):
         path = tmp_path / "state.sqlite"
         task = enqueue(path, "terminal")
         reserve(path)
@@ -283,14 +284,14 @@ class TestFilaFalhas:
         assert get(path, task["id"])["status"] == "FAILED"
         assert get(path, task["id"])["error"] == "primeira falha"
 
-    def tarefa_reservada_nao_pode_ser_completada_sem_reserva(self, tmp_path):
+    def test_tarefa_reservada_nao_pode_ser_completada_sem_reserva(self, tmp_path):
         path = tmp_path / "state.sqlite"
         task = enqueue(path, "nao reservada")
         # Sem reserve, update não altera de QUEUED.
         update(path, task["id"], inference_response="tarde")
         assert get(path, task["id"])["status"] == "QUEUED"
 
-    def idempotency_key_reusada_com_prompt_diferente_falha(self, tmp_path):
+    def test_idempotency_key_reusada_com_prompt_diferente_falha(self, tmp_path):
         path = tmp_path / "state.sqlite"
         enqueue(path, "prompt A", idempotency_key="chave")
         with pytest.raises(ValueError):
