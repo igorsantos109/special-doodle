@@ -1,6 +1,7 @@
 """CLI de gestao de modelos: list, status, health, start, stop, switch, vram,
 gen-llama-swap."""
 import argparse
+import logging
 import os
 import sys
 import time
@@ -18,6 +19,8 @@ from .model_manager import (
 )
 from .model_vram import ModelVramStore
 from .models.client import LlamaSwapClient
+
+logger = logging.getLogger("pcsala_agent.models_cli")
 
 VRAM_GUARD_MIN_FREE_MB = 1536  # 1,5 GB
 VRAM_RELEASE_WAIT_SECONDS = 30
@@ -63,7 +66,7 @@ class ModelsCLI:
         }
 
     def close(self):
-        """Fecha recursos (conexão SQLite do ModelVramStore)."""
+        """Fecha recursos (conexao SQLite do ModelVramStore)."""
         if self.vram_store is not None:
             self.vram_store.db.close()
 
@@ -93,7 +96,8 @@ class ModelsCLI:
     # ---------------------------------------------------------------- list
 
     def _cmd_list(self):
-        print("MODELO                   PORTA     CLASSE   COMPARTILHADO  EXCLUSIVO   ENDPOINT")
+        print("MODELO                   PORTA     CLASSE   COMPARTILHADO  EXCLUSIVO   "
+              "ENDPOINT")
         for m in self.registry.list():
             print(f"{m.model_id:<24} {self._port(m.endpoint):<9} "
                   f"{m.model_class:<8} {'sim' if m.shared else 'nao':<12} "
@@ -139,9 +143,20 @@ class ModelsCLI:
             return 1
         if (model.model_class == "GPU" and not self.skip_vram_guard
                 and not self._vram_ok()):
+            logger.warning(
+                "start recusado por VRAM: modelo=%s classe=%s",
+                model_id,
+                model.model_class,
+            )
             print("Recusando arranque: VRAM livre abaixo de 1,5 GB",
                   file=sys.stderr)
             return 3
+        logger.info(
+            "start: modelo=%s unidade=%s backend=%s",
+            model_id,
+            model.unit,
+            model.backend,
+        )
         op = self.coordinator.request_start(model_id)
         try:
             with switch_lock(self.lock_dir):
@@ -150,13 +165,27 @@ class ModelsCLI:
                         if (peer.model_id != model_id
                                 and peer.exclusive_group == model.exclusive_group
                                 and self._is_model_running(peer.model_id)):
+                            logger.warning(
+                                "start bloqueado: grupo exclusivo ocupado por %s",
+                                peer.model_id,
+                            )
                             raise ExecutorBusy(model.exclusive_group)
                 self.coordinator.reserve_engine(model_id, requester="cli")
+                logger.info(
+                    "start: reserva obtida para %s (operacao %s)",
+                    model_id,
+                    op.operation_id,
+                )
                 if model.backend == "llama-swap":
-                    # Execução via llama-swap: pedido mínimo para carregar
+                    # Execucao via llama-swap: pedido minimo para carregar
                     # o modelo no proxy.
                     ok, error = self.llama_swap_client.load_model(model_id)
                     if not ok:
+                        logger.warning(
+                            "start falhou llama-swap: modelo=%s erro=%s",
+                            model_id,
+                            error,
+                        )
                         print(f"Falha ao carregar {model_id} via llama-swap: "
                               f"{error}", file=sys.stderr)
                         self.coordinator.update_confirmed_status(
@@ -164,9 +193,14 @@ class ModelsCLI:
                         )
                         self.coordinator.release_engine(model_id)
                         return 1
-                    # Aguarda o proxy ficar disponível (health do llama-swap).
+                    # Aguarda o proxy ficar disponivel (health do llama-swap).
                     healthy = self.llama_swap_client.health()
                     if not healthy:
+                        logger.warning(
+                            "start falhou: llama-swap nao respondeu /health: "
+                            "modelo=%s",
+                            model_id,
+                        )
                         print("Falha: llama-swap nao respondeu /health "
                               "dentro do tempo esperado",
                               file=sys.stderr)
@@ -179,12 +213,24 @@ class ModelsCLI:
                     self.coordinator.update_confirmed_status(
                         op.operation_id, "COMPLETED",
                     )
+                    logger.info(
+                        "start concluido via llama-swap: modelo=%s operacao=%s",
+                        model_id,
+                        op.operation_id,
+                    )
                     print(f"{model_id}: carregado via llama-swap "
                           f"(operacao {op.operation_id})")
                     return 0
                 # Backend systemd: comportamento atual.
                 code = self.systemctl("start", model.unit)
                 if code != 0:
+                    logger.warning(
+                        "start falhou systemctl: modelo=%s unidade=%s "
+                        "codigo=%s",
+                        model_id,
+                        model.unit,
+                        code,
+                    )
                     print(f"Falha ao iniciar {model.unit} (codigo {code})",
                           file=sys.stderr)
                     self.coordinator.update_confirmed_status(
@@ -194,9 +240,14 @@ class ModelsCLI:
                     if _unit_inactive(model.unit):
                         self.coordinator.release_engine(model_id)
                     return code
-                # Aguarda o endpoint /health ficar disponível.
+                # Aguarda o endpoint /health ficar disponivel.
                 healthy = self.coordinator.wait_for_health(model_id)
                 if not healthy:
+                    logger.warning(
+                        "start falhou health: modelo=%s unidade=%s",
+                        model_id,
+                        model.unit,
+                    )
                     print(f"Falha: {model.unit} nao respondeu /health "
                           f"dentro do tempo esperado",
                           file=sys.stderr)
@@ -210,7 +261,16 @@ class ModelsCLI:
                 self.coordinator.update_confirmed_status(
                     op.operation_id, "COMPLETED",
                 )
+                logger.info(
+                    "start concluido: modelo=%s operacao=%s",
+                    model_id,
+                    op.operation_id,
+                )
         except ExecutorBusy:
+            logger.warning(
+                "start bloqueado: troca de GPU ocupada: modelo=%s",
+                model_id,
+            )
             print("Bloqueio de troca de GPU ocupado", file=sys.stderr)
             self.coordinator.update_confirmed_status(
                 op.operation_id, "FAILED",
@@ -227,30 +287,60 @@ class ModelsCLI:
         if model is None:
             print(f"Modelo desconhecido: {model_id}", file=sys.stderr)
             return 1
+        logger.info(
+            "stop: modelo=%s unidade=%s backend=%s",
+            model_id,
+            model.unit,
+            model.backend,
+        )
         try:
             with switch_lock(self.lock_dir):
                 if model.backend == "llama-swap":
                     # stop = endpoint de descarga do llama-swap.
                     ok, error = self.llama_swap_client.unload_model(model_id)
                     if not ok:
+                        logger.warning(
+                            "stop falhou llama-swap: modelo=%s erro=%s",
+                            model_id,
+                            error,
+                        )
                         print(f"Falha ao descarregar {model_id} via "
                               f"llama-swap: {error}", file=sys.stderr)
                         return 1
                     self.coordinator.release_engine(model_id)
+                    logger.info("stop concluido via llama-swap: modelo=%s",
+                                model_id)
                     print(f"{model_id}: descarregado via llama-swap")
                     return 0
                 # Backend systemd: comportamento atual.
                 code = self.systemctl("stop", model.unit)
                 if code == 0:
                     if not _unit_inactive(model.unit):
+                        logger.warning(
+                            "stop: unidade ainda ativa apos systemctl stop: "
+                            "modelo=%s unidade=%s",
+                            model_id,
+                            model.unit,
+                        )
                         print(f"Falha ao parar {model.unit}: servico ainda ativo",
                               file=sys.stderr)
                         return 1
                     self.coordinator.release_engine(model_id)
+                    logger.info("stop concluido: modelo=%s", model_id)
         except ExecutorBusy:
+            logger.warning(
+                "stop bloqueado: troca de GPU ocupada: modelo=%s",
+                model_id,
+            )
             print("Bloqueio de troca de GPU ocupado", file=sys.stderr)
             return 3
         if code != 0:
+            logger.warning(
+                "stop falhou systemctl: modelo=%s unidade=%s codigo=%s",
+                model_id,
+                model.unit,
+                code,
+            )
             print(f"Falha ao parar {model.unit} (codigo {code})",
                   file=sys.stderr)
             return code
@@ -271,6 +361,12 @@ class ModelsCLI:
                   file=sys.stderr)
             return 3
         op = self.coordinator.request_switch(None, target_model_id)
+        logger.info(
+            "switch: alvo=%s operacao=%s grupo=%s",
+            target_model_id,
+            op.operation_id,
+            to_model.exclusive_group,
+        )
         try:
             with switch_lock(self.lock_dir):
                 peers = [m for m in self.registry.exclusive_models()
@@ -278,63 +374,141 @@ class ModelsCLI:
                          and m.exclusive_group == to_model.exclusive_group
                          and self._is_model_running(m.model_id)]
                 if len(peers) > 1:
+                    logger.warning(
+                        "switch falhou: grupo com multiplos modelos ativos: "
+                        "alvo=%s",
+                        target_model_id,
+                    )
                     self.coordinator.update_confirmed_status(
-                        op.operation_id, "FAILED", error="grupo com multiplos modelos ativos",
+                        op.operation_id, "FAILED",
+                        error="grupo com multiplos modelos ativos",
                     )
                     return 3
                 if self._is_model_running(target_model_id):
                     if peers:
+                        logger.warning(
+                            "switch falhou: conflito no grupo exclusivo: "
+                            "alvo=%s",
+                            target_model_id,
+                        )
                         self.coordinator.update_confirmed_status(
-                            op.operation_id, "FAILED", error="conflito no grupo exclusivo",
+                            op.operation_id, "FAILED",
+                            error="conflito no grupo exclusivo",
                         )
                         return 3
-                    self.coordinator.reserve_engine(target_model_id, requester="cli")
-                    self.coordinator.update_confirmed_status(op.operation_id, "COMPLETED")
-                    print(f"{target_model_id} ja e o modelo ativo no slot exclusivo")
+                    self.coordinator.reserve_engine(target_model_id,
+                                                    requester="cli")
+                    self.coordinator.update_confirmed_status(
+                        op.operation_id, "COMPLETED")
+                    logger.info(
+                        "switch concluido (ja ativo): alvo=%s operacao=%s",
+                        target_model_id,
+                        op.operation_id,
+                    )
+                    print(f"{target_model_id} ja e o modelo ativo no slot "
+                          "exclusivo")
                     return 0
                 previous = peers[0] if peers else None
                 if previous is not None:
+                    logger.info("switch: parando modelo anterior=%s",
+                                previous.model_id)
                     code = self.systemctl("stop", previous.unit)
                     if code != 0 or not _unit_inactive(previous.unit):
+                        logger.warning(
+                            "switch falhou: modelo anterior nao parou: "
+                            "anterior=%s codigo=%s",
+                            previous.model_id,
+                            code,
+                        )
                         self.coordinator.update_confirmed_status(
-                            op.operation_id, "FAILED", error="modelo anterior nao parou",
+                            op.operation_id, "FAILED",
+                            error="modelo anterior nao parou",
                         )
                         return code or 1
                     self.coordinator.release_engine(previous.model_id)
+                    logger.info(
+                        "switch: reserva anterior liberada: anterior=%s",
+                        previous.model_id,
+                    )
                     self._await_vram_release()
                 try:
-                    self.coordinator.reserve_engine(target_model_id, requester="cli")
+                    self.coordinator.reserve_engine(target_model_id,
+                                                    requester="cli")
+                    logger.info(
+                        "switch: reserva obtida para alvo=%s operacao=%s",
+                        target_model_id,
+                        op.operation_id,
+                    )
                 except ExecutorBusy:
+                    logger.warning(
+                        "switch falhou: reserva conflitante: alvo=%s "
+                        "operacao=%s",
+                        target_model_id,
+                        op.operation_id,
+                    )
                     self.coordinator.update_confirmed_status(
-                        op.operation_id, "FAILED", error="reserva conflitante; reconciliar grupo",
+                        op.operation_id, "FAILED",
+                        error="reserva conflitante; reconciliar grupo",
                     )
                     return 3
                 if not self.skip_vram_guard and not self._vram_ok():
+                    logger.warning(
+                        "switch falhou: VRAM insuficiente: alvo=%s",
+                        target_model_id,
+                    )
                     self.coordinator.release_engine(target_model_id)
-                    self._restore_previous(previous, op.operation_id, "VRAM insuficiente")
+                    self._restore_previous(previous,
+                                           op.operation_id,
+                                           "VRAM insuficiente")
                     return 3
                 code = self.systemctl("start", to_model.unit)
-                healthy = code == 0 and self.coordinator.wait_for_health(target_model_id)
+                healthy = code == 0 and self.coordinator.wait_for_health(
+                    target_model_id)
                 if not healthy:
                     # A start timeout does not prove the process released its GPU.
+                    logger.warning(
+                        "switch: alvo nao ficou saudavel: alvo=%s codigo=%s",
+                        target_model_id,
+                        code,
+                    )
                     stopped = _unit_inactive(to_model.unit)
                     if not stopped:
                         stopped = (self.systemctl("stop", to_model.unit) == 0
                                    and _unit_inactive(to_model.unit))
                     if not stopped:
+                        logger.warning(
+                            "switch ROLLBACK_FAILED: alvo nao parou; "
+                            "reserva mantida: alvo=%s",
+                            target_model_id,
+                        )
                         self.coordinator.update_confirmed_status(
                             op.operation_id, "ROLLBACK_FAILED",
-                            error="novo modelo nao parou; reserva mantida; reconciliar",
+                            error="novo modelo nao parou; reserva mantida; "
+                                  "reconciliar",
                         )
                         return code or 1
                     self.coordinator.release_engine(target_model_id)
-                    self._restore_previous(previous, op.operation_id, "novo modelo falhou")
+                    self._restore_previous(previous,
+                                           op.operation_id,
+                                           "novo modelo falhou")
                     return code or 1
-                self.coordinator.update_confirmed_status(op.operation_id, "COMPLETED")
+                self.coordinator.update_confirmed_status(
+                    op.operation_id, "COMPLETED")
+                logger.info(
+                    "switch concluido: %s -> %s operacao=%s",
+                    previous.model_id if previous else "-",
+                    target_model_id,
+                    op.operation_id,
+                )
         except ExecutorBusy:
+            logger.warning(
+                "switch bloqueado: troca de GPU ocupada: alvo=%s",
+                target_model_id,
+            )
             print("Bloqueio de troca de GPU ocupado", file=sys.stderr)
             self.coordinator.update_confirmed_status(
-                op.operation_id, "FAILED", error="bloqueio de troca ocupado",
+                op.operation_id, "FAILED",
+                error="bloqueio de troca ocupado",
             )
             return 3
         origem = previous.model_id if previous is not None else "-"
@@ -343,21 +517,27 @@ class ModelsCLI:
 
     def _restore_previous(self, previous, operation_id, error):
         if previous is None:
-            self.coordinator.update_confirmed_status(operation_id, "FAILED", error=error)
+            self.coordinator.update_confirmed_status(operation_id, "FAILED",
+                                                     error=error)
             return
         try:
-            self.coordinator.reserve_engine(previous.model_id, requester="rollback")
+            self.coordinator.reserve_engine(previous.model_id,
+                                            requester="rollback")
         except ExecutorBusy:
             self.coordinator.update_confirmed_status(
-                operation_id, "ROLLBACK_FAILED", error=f"{error}; reserva anterior indisponivel",
+                operation_id, "ROLLBACK_FAILED",
+                error=f"{error}; reserva anterior indisponivel",
             )
             return
         code = self.systemctl("start", previous.unit)
-        healthy = code == 0 and self.coordinator.wait_for_health(previous.model_id)
+        healthy = code == 0 and self.coordinator.wait_for_health(
+            previous.model_id)
         if not healthy and _unit_inactive(previous.unit):
             self.coordinator.release_engine(previous.model_id)
         self.coordinator.update_confirmed_status(
-            operation_id, "ROLLED_BACK" if healthy else "ROLLBACK_FAILED", error=error,
+            operation_id,
+            "ROLLED_BACK" if healthy else "ROLLBACK_FAILED",
+            error=error,
         )
 
     def _await_vram_release(self):
@@ -370,7 +550,8 @@ class ModelsCLI:
             time.sleep(VRAM_RELEASE_POLL_SECONDS)
 
     def _is_model_running(self, model_id):
-        """Retorna True se o modelo esta rodando; False se nao puder verificar."""
+        """Retorna True se o modelo esta rodando; False se nao puder
+        verificar."""
         try:
             st = self.coordinator.ensure_ready(model_id)
         except OSError:
@@ -396,7 +577,8 @@ class ModelsCLI:
         if free_target is not None:
             print(f"VRAM livre GPU {gpu_index}: {free_target} MB")
             if free_target < VRAM_GUARD_MIN_FREE_MB:
-                print("AVISO: folga abaixo de 1,5 GB; start/switch serao recusados")
+                print("AVISO: folga abaixo de 1,5 GB; start/switch serao "
+                      "recusados")
         else:
             print(f"VRAM livre GPU {gpu_index}: indisponivel")
         print()
@@ -410,7 +592,8 @@ class ModelsCLI:
                 print("  (nenhuma medida registrada)")
             for row in rows:
                 print(f"  {row['model_id']} ctx={row['context_size']}: "
-                      f"{row['vram_used_mb']} MB (medido em {row['measured_at']})")
+                      f"{row['vram_used_mb']} MB (medido em "
+                      f"{row['measured_at']})")
         return 0
 
     # ------------------------------------------------------------- gen-llama-swap
@@ -418,7 +601,7 @@ class ModelsCLI:
     def _cmd_gen_llama_swap(self):
         """Gera deploy/llama-swap/config.yaml a partir do registro.
 
-        Nunca edita à mão: usa os argumentos EXATOS das units do registro,
+        Nunca edita a mao: usa os argumentos EXATOS das units do registro,
         com ${PORT} no lugar da porta fixa.
         """
         import yaml
@@ -460,7 +643,7 @@ class ModelsCLI:
             with open(output, "w", encoding="utf-8") as f:
                 yaml.safe_dump(config, f, sort_keys=False, allow_unicode=True)
         except ImportError:
-            print("Erro: PyYAML não instalado. Rode: pip install pyyaml",
+            print("Erro: PyYAML nao instalado. Rode: pip install pyyaml",
                   file=sys.stderr)
             return 1
         except OSError as exc:
@@ -518,10 +701,10 @@ def main(argv=None):
     parser.add_argument("--db", default=None,
                         help="Caminho do SQLite (default: <root>/state.sqlite)")
     parser.add_argument("--sem-guarda-vram", action="store_true",
-                        help="Ignora a guarda de VRAM (uso por conta própria)")
+                        help="Ignora a guarda de VRAM (uso por conta propria)")
     parser.add_argument("--llama-swap-url", default=None,
                         help="URL base do proxy llama-swap "
-                             "(padrão: http://127.0.0.1:8093)")
+                             "(padrao: http://127.0.0.1:8093)")
     parser.add_argument("command", choices=[
         "list", "status", "health", "start", "stop", "switch", "vram",
         "operation", "gen-llama-swap",
