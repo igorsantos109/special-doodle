@@ -174,6 +174,13 @@ class QueuePollCycle:
                 )
                 code = 1
                 continue
+            except Exception as error:  # nao deixa a tarefa em RESERVED para sempre
+                queue_update(
+                    database, queue_id,
+                    error=f"{type(error).__name__}: {error}",
+                )
+                code = 1
+                continue
 
             queue_update(
                 database, queue_id,
