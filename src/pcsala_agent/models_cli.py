@@ -14,7 +14,7 @@ from .model_manager import (
     GPU_SWITCH_LOCK_DIR,
     ModelCoordinator,
     ModelRegistry,
-    _unit_active,
+    _unit_inactive,
 )
 from .model_vram import ModelVramStore
 from .models.client import LlamaSwapClient
@@ -137,13 +137,20 @@ class ModelsCLI:
         if model is None:
             print(f"Modelo desconhecido: {model_id}", file=sys.stderr)
             return 1
-        if not self.skip_vram_guard and not self._vram_ok():
+        if (model.model_class == "GPU" and not self.skip_vram_guard
+                and not self._vram_ok()):
             print("Recusando arranque: VRAM livre abaixo de 1,5 GB",
                   file=sys.stderr)
             return 3
         op = self.coordinator.request_start(model_id)
         try:
             with switch_lock(self.lock_dir):
+                if model.exclusive_group is not None:
+                    for peer in self.registry.exclusive_models():
+                        if (peer.model_id != model_id
+                                and peer.exclusive_group == model.exclusive_group
+                                and self._is_model_running(peer.model_id)):
+                            raise ExecutorBusy(model.exclusive_group)
                 self.coordinator.reserve_engine(model_id, requester="cli")
                 if model.backend == "llama-swap":
                     # Execução via llama-swap: pedido mínimo para carregar
@@ -184,7 +191,8 @@ class ModelsCLI:
                         op.operation_id, "FAILED",
                         error=f"systemctl start codigo {code}",
                     )
-                    self.coordinator.release_engine(model_id)
+                    if _unit_inactive(model.unit):
+                        self.coordinator.release_engine(model_id)
                     return code
                 # Aguarda o endpoint /health ficar disponível.
                 healthy = self.coordinator.wait_for_health(model_id)
@@ -196,7 +204,8 @@ class ModelsCLI:
                         op.operation_id, "FAILED",
                         error="timeout aguardando /health",
                     )
-                    self.coordinator.release_engine(model_id)
+                    if _unit_inactive(model.unit):
+                        self.coordinator.release_engine(model_id)
                     return 1
                 self.coordinator.update_confirmed_status(
                     op.operation_id, "COMPLETED",
@@ -232,7 +241,12 @@ class ModelsCLI:
                     return 0
                 # Backend systemd: comportamento atual.
                 code = self.systemctl("stop", model.unit)
-                self.coordinator.release_engine(model_id)
+                if code == 0:
+                    if not _unit_inactive(model.unit):
+                        print(f"Falha ao parar {model.unit}: servico ainda ativo",
+                              file=sys.stderr)
+                        return 1
+                    self.coordinator.release_engine(model_id)
         except ExecutorBusy:
             print("Bloqueio de troca de GPU ocupado", file=sys.stderr)
             return 3
@@ -256,135 +270,95 @@ class ModelsCLI:
                   "(27B, Laguna GPU, Ornith)",
                   file=sys.stderr)
             return 3
-        from_model_id = None
-        for m in self.registry.exclusive_models():
-            if m.model_id == target_model_id:
-                continue
-            if self._is_model_running(m.model_id):
-                from_model_id = m.model_id
-                break
-        if from_model_id == target_model_id:
-            print(f"{target_model_id} ja e o modelo ativo no slot exclusivo")
-            return 0
-        from_model = self.registry.get(from_model_id) if from_model_id else None
-
-        op = self.coordinator.request_switch(
-            from_model_id, target_model_id)
+        op = self.coordinator.request_switch(None, target_model_id)
         try:
             with switch_lock(self.lock_dir):
-                self.coordinator.reserve_engine(target_model_id, requester="cli")
-                # Para o modelo ativo ANTES de checar a VRAM, aguardando
-                # liberacao ate 30 s.
-                if from_model is not None and _unit_active(from_model.unit):
-                    code = self.systemctl("stop", from_model.unit)
-                    if code != 0:
-                        print(f"Falha ao parar {from_model_id} (codigo {code})",
-                              file=sys.stderr)
-                        self.coordinator.release_engine(target_model_id)
-                        self.coordinator.update_confirmed_status(
-                            op.operation_id, "FAILED",
-                            error=f"systemctl stop {from_model_id} codigo {code}",
-                        )
-                        return code
-                    self._await_vram_release()
-                # Guarda de VRAM apos liberacao (falha fechada).
-                if not self.skip_vram_guard and not self._vram_ok():
-                    print("Recusando troca: VRAM livre abaixo de 1,5 GB "
-                          "apos liberacao", file=sys.stderr)
-                    self.coordinator.release_engine(target_model_id)
+                peers = [m for m in self.registry.exclusive_models()
+                         if m.model_id != target_model_id
+                         and m.exclusive_group == to_model.exclusive_group
+                         and self._is_model_running(m.model_id)]
+                if len(peers) > 1:
                     self.coordinator.update_confirmed_status(
-                        op.operation_id, "FAILED",
-                        error="VRAM livre abaixo de 1,5 GB apos liberacao",
+                        op.operation_id, "FAILED", error="grupo com multiplos modelos ativos",
                     )
                     return 3
+                if self._is_model_running(target_model_id):
+                    if peers:
+                        self.coordinator.update_confirmed_status(
+                            op.operation_id, "FAILED", error="conflito no grupo exclusivo",
+                        )
+                        return 3
+                    self.coordinator.reserve_engine(target_model_id, requester="cli")
+                    self.coordinator.update_confirmed_status(op.operation_id, "COMPLETED")
+                    print(f"{target_model_id} ja e o modelo ativo no slot exclusivo")
+                    return 0
+                previous = peers[0] if peers else None
+                if previous is not None:
+                    code = self.systemctl("stop", previous.unit)
+                    if code != 0 or not _unit_inactive(previous.unit):
+                        self.coordinator.update_confirmed_status(
+                            op.operation_id, "FAILED", error="modelo anterior nao parou",
+                        )
+                        return code or 1
+                    self.coordinator.release_engine(previous.model_id)
+                    self._await_vram_release()
+                try:
+                    self.coordinator.reserve_engine(target_model_id, requester="cli")
+                except ExecutorBusy:
+                    self.coordinator.update_confirmed_status(
+                        op.operation_id, "FAILED", error="reserva conflitante; reconciliar grupo",
+                    )
+                    return 3
+                if not self.skip_vram_guard and not self._vram_ok():
+                    self.coordinator.release_engine(target_model_id)
+                    self._restore_previous(previous, op.operation_id, "VRAM insuficiente")
+                    return 3
                 code = self.systemctl("start", to_model.unit)
-                if code != 0:
-                    print(f"Falha ao iniciar {to_model.unit} (codigo {code})",
-                          file=sys.stderr)
-                    self.coordinator.release_engine(target_model_id)
-                    self.coordinator.update_confirmed_status(
-                        op.operation_id, "FAILED",
-                        error=f"systemctl start {to_model.unit} codigo {code}",
-                    )
-                    # Rollback: tentar religar o modelo anterior.
-                    if from_model is not None:
-                        rc2 = self.systemctl("start", from_model.unit)
-                        if rc2 == 0:
-                            healthy = self.coordinator.wait_for_health(
-                                from_model_id)
-                            if healthy:
-                                self.coordinator.update_confirmed_status(
-                                    op.operation_id, "ROLLED_BACK",
-                                    error=(f"novo modelo falhou; "
-                                           f"{from_model_id} religado"),
-                                )
-                            else:
-                                self.coordinator.update_confirmed_status(
-                                    op.operation_id, "ROLLBACK_FAILED",
-                                    error=(f"novo modelo falhou; "
-                                           f"{from_model_id} nao ficou saudavel"),
-                                )
-                        else:
-                            self.coordinator.update_confirmed_status(
-                                op.operation_id, "ROLLBACK_FAILED",
-                                error=(f"novo modelo falhou; "
-                                       f"rollback de {from_model_id} "
-                                       f"codigo {rc2}"),
-                            )
-                    return code
-                # Aguarda o endpoint /health do novo modelo.
-                healthy = self.coordinator.wait_for_health(target_model_id)
+                healthy = code == 0 and self.coordinator.wait_for_health(target_model_id)
                 if not healthy:
-                    print(f"Falha: {to_model.unit} nao respondeu /health "
-                          f"dentro do tempo esperado",
-                          file=sys.stderr)
+                    # A start timeout does not prove the process released its GPU.
+                    stopped = _unit_inactive(to_model.unit)
+                    if not stopped:
+                        stopped = (self.systemctl("stop", to_model.unit) == 0
+                                   and _unit_inactive(to_model.unit))
+                    if not stopped:
+                        self.coordinator.update_confirmed_status(
+                            op.operation_id, "ROLLBACK_FAILED",
+                            error="novo modelo nao parou; reserva mantida; reconciliar",
+                        )
+                        return code or 1
                     self.coordinator.release_engine(target_model_id)
-                    self.coordinator.update_confirmed_status(
-                        op.operation_id, "FAILED",
-                        error="timeout aguardando /health",
-                    )
-                    # Rollback: tentar religar o modelo anterior.
-                    if from_model is not None:
-                        rc2 = self.systemctl("start", from_model.unit)
-                        if rc2 == 0:
-                            healthy2 = self.coordinator.wait_for_health(
-                                from_model_id)
-                            if healthy2:
-                                self.coordinator.update_confirmed_status(
-                                    op.operation_id, "ROLLED_BACK",
-                                    error=(f"novo modelo nao ficou saudavel; "
-                                           f"{from_model_id} religado"),
-                                )
-                            else:
-                                self.coordinator.update_confirmed_status(
-                                    op.operation_id, "ROLLBACK_FAILED",
-                                    error=(f"novo modelo nao ficou saudavel; "
-                                           f"{from_model_id} nao ficou saudavel"),
-                                )
-                        else:
-                            self.coordinator.update_confirmed_status(
-                                op.operation_id, "ROLLBACK_FAILED",
-                                error=(f"novo modelo nao ficou saudavel; "
-                                       f"rollback de {from_model_id} "
-                                       f"codigo {rc2}"),
-                            )
-                    return 1
-                self.coordinator.update_confirmed_status(
-                    op.operation_id, "COMPLETED",
-                )
-                if from_model is not None:
-                    self.coordinator.release_engine(from_model_id)
+                    self._restore_previous(previous, op.operation_id, "novo modelo falhou")
+                    return code or 1
+                self.coordinator.update_confirmed_status(op.operation_id, "COMPLETED")
         except ExecutorBusy:
             print("Bloqueio de troca de GPU ocupado", file=sys.stderr)
-            self.coordinator.release_engine(target_model_id)
             self.coordinator.update_confirmed_status(
-                op.operation_id, "FAILED",
-                error="bloqueio de troca ocupado",
+                op.operation_id, "FAILED", error="bloqueio de troca ocupado",
             )
             return 3
-        origem = from_model_id or "-"
+        origem = previous.model_id if previous is not None else "-"
         print(f"Troca concluida: {origem} -> {target_model_id}")
         return 0
+
+    def _restore_previous(self, previous, operation_id, error):
+        if previous is None:
+            self.coordinator.update_confirmed_status(operation_id, "FAILED", error=error)
+            return
+        try:
+            self.coordinator.reserve_engine(previous.model_id, requester="rollback")
+        except ExecutorBusy:
+            self.coordinator.update_confirmed_status(
+                operation_id, "ROLLBACK_FAILED", error=f"{error}; reserva anterior indisponivel",
+            )
+            return
+        code = self.systemctl("start", previous.unit)
+        healthy = code == 0 and self.coordinator.wait_for_health(previous.model_id)
+        if not healthy and _unit_inactive(previous.unit):
+            self.coordinator.release_engine(previous.model_id)
+        self.coordinator.update_confirmed_status(
+            operation_id, "ROLLED_BACK" if healthy else "ROLLBACK_FAILED", error=error,
+        )
 
     def _await_vram_release(self):
         """Aguarda ate VRAM_RELEASE_WAIT_SECONDS pela liberacao da GPU."""
@@ -531,6 +505,8 @@ class ModelsCLI:
                 check=False, capture_output=True, text=True, timeout=30,
             )
             return result.returncode
+        except subprocess.TimeoutExpired:
+            return 124
         except OSError:
             return 127
 

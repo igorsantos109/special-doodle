@@ -1,5 +1,6 @@
 import shutil
 import sqlite3
+import sysconfig
 from pathlib import Path
 
 
@@ -33,7 +34,12 @@ def migrate(database_path, migrations_dir=None):
     database_path = Path(database_path)
     if migrations_dir is None:
         migrations_dir = Path(__file__).resolve().parents[2] / "migrations"
+        if not migrations_dir.is_dir():
+            migrations_dir = (Path(sysconfig.get_path("data"))
+                              / "share" / "pc-sala-agent" / "migrations")
     migrations_dir = Path(migrations_dir)
+    if not migrations_dir.is_dir() or not _known_versions(migrations_dir):
+        raise MigrationError("diretorio de migracoes ausente ou vazio")
     database_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(database_path))
     try:

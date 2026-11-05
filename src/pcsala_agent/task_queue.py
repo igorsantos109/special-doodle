@@ -13,8 +13,8 @@ def _db(database):
 
 def enqueue(database, prompt, *, profile="gpu-triage-v1", idempotency_key=None):
     database = Path(database).resolve()
-    migrate(database)
     with database_lock(database):
+        migrate(database)
         db = _db(database)
         try:
             if idempotency_key is not None:
@@ -63,8 +63,8 @@ def enqueue(database, prompt, *, profile="gpu-triage-v1", idempotency_key=None):
 
 def reserve(database):
     database = Path(database).resolve()
-    migrate(database)
     with database_lock(database):
+        migrate(database)
         db = _db(database)
         try:
             row = db.execute(
@@ -108,7 +108,7 @@ def update(database, task_id, *, inference_response="", inference_id="",
                        inference_status=?,
                        error=?,
                        completed_at=strftime('%Y-%m-%dT%H:%M:%S','now')
-                   WHERE id=?""",
+                   WHERE id=? AND status='RESERVED'""",
                 (status, inference_response, inference_id,
                  inference_model, inference_status, error, task_id),
             )

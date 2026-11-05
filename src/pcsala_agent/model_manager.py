@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from .database import connect
+from .locking import ExecutorBusy
 
 GPU_SWITCH_LOCK_DIR = Path("/run/pcsala")
 
@@ -230,7 +231,8 @@ class ModelCoordinator:
             SET confirmed_status=?, status=?,
                 updated_at=strftime('%Y-%m-%dT%H:%M:%S','now')
             WHERE operation_id=?""",
-            (status, status, operation_id),
+            (status, "FAILED" if status in ("ROLLED_BACK", "ROLLBACK_FAILED") else status,
+             operation_id),
         )
         if error is not None:
             db.execute(
@@ -286,36 +288,46 @@ class ModelCoordinator:
         db = self._db()
         if db is None:
             return None
-        reservation_id = secrets.token_hex(8)
-        cuda_visible = _cuda_visible_for_model(model)
-        db.execute(
-            """CREATE TABLE IF NOT EXISTS model_reservations (
-            reservation_id TEXT PRIMARY KEY,
-            model_id TEXT NOT NULL,
-            requester TEXT NOT NULL DEFAULT 'system',
-            exclusive_group TEXT,
-            reserved_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now')),
-            released_at TEXT,
-            cuda_visible_devices TEXT,
-            status TEXT NOT NULL DEFAULT 'active' CHECK (
-                status IN ('active', 'released')
+        own = isinstance(self.database, (str, Path))
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS model_reservations (
+                reservation_id TEXT PRIMARY KEY, model_id TEXT NOT NULL,
+                requester TEXT NOT NULL DEFAULT 'system', exclusive_group TEXT,
+                reserved_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now')),
+                released_at TEXT, cuda_visible_devices TEXT,
+                status TEXT NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active', 'released'))
+                )"""
             )
-        )"""
-        )
-        db.execute(
-            """CREATE INDEX IF NOT EXISTS model_reservations_model
-            ON model_reservations(model_id, status)"""
-        )
-        db.execute(
-            """INSERT INTO model_reservations
-            (reservation_id, model_id, requester, exclusive_group,
-             cuda_visible_devices, status)
-            VALUES (?, ?, ?, ?, ?, 'active')""",
-            (reservation_id, model_id, requester, model.exclusive_group,
-             cuda_visible),
-        )
-        db.commit()
-        return reservation_id
+            rows = db.execute(
+                """SELECT reservation_id, model_id FROM model_reservations
+                WHERE exclusive_group=? AND status='active'""",
+                (model.exclusive_group,),
+            ).fetchall()
+            if any(row["model_id"] != model_id for row in rows):
+                raise ExecutorBusy(f"Grupo ocupado: {model.exclusive_group}")
+            if rows:
+                db.commit()
+                return rows[0]["reservation_id"]
+            reservation_id = secrets.token_hex(8)
+            db.execute(
+                """INSERT INTO model_reservations
+                (reservation_id, model_id, requester, exclusive_group,
+                 cuda_visible_devices, status)
+                VALUES (?, ?, ?, ?, ?, 'active')""",
+                (reservation_id, model_id, requester, model.exclusive_group,
+                 _cuda_visible_for_model(model)),
+            )
+            db.commit()
+            return reservation_id
+        except BaseException:
+            db.rollback()
+            raise
+        finally:
+            if own:
+                db.close()
 
     def release_engine(self, model_id):
         model = self.registry.get(model_id)
@@ -402,6 +414,18 @@ def _unit_active(unit):
             check=False, capture_output=True, text=True, timeout=3,
         )
         return result.stdout.strip() == "active"
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _unit_inactive(unit):
+    """Only a confirmed inactive/failed unit can release its reservation."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", unit],
+            check=False, capture_output=True, text=True, timeout=3,
+        )
+        return result.returncode == 3 and result.stdout.strip() in ("inactive", "failed")
     except (OSError, subprocess.SubprocessError):
         return False
 

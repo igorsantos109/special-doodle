@@ -111,16 +111,20 @@ class TestLlamaSwapClient:
             server.shutdown()
 
     def test_timeout_injected_clock_no_sleep(self):
-        """Timeout usa relógio injetado, sem dormir de verdade."""
-        server, port = _start_fake_server()
-        try:
-            client = LlamaSwapClient(f"http://127.0.0.1:{port}",
-                                     timeout_seconds=0.001)
-            # Servidor real responde rápido, não deve timeout.
-            ok, _error = client.load_model("bonsai-4b-gpu")
-            assert ok is True
-        finally:
-            server.shutdown()
+        """A tiny timeout is forwarded; no wall-clock timing assumption."""
+        import io
+        captured = {}
+
+        def transport(request, timeout=None):
+            captured["timeout"] = timeout
+            return io.BytesIO(b'{"ok":true}')
+
+        client = LlamaSwapClient("http://127.0.0.1:8092",
+                                 timeout_seconds=0.001, _urlopen=transport)
+        ok, error = client.load_model("bonsai-4b-gpu")
+        assert ok is True
+        assert error is None
+        assert captured["timeout"] == 0.001
 
 
 class TestHybridPolicy:
