@@ -3,11 +3,6 @@ import os
 from pydantic import BaseModel, ConfigDict, field_validator
 
 
-def _env(name, default):
-    """Override por ambiente apenas quando definido; default intacto."""
-    return os.environ.get(name, default)
-
-
 class ProfileConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
     profile: str
@@ -16,6 +11,8 @@ class ProfileConfig(BaseModel):
     timeout_seconds: int = 60
     max_response_bytes: int = 65536
     api_key_env: str = "DSH_LOCAL_API_KEY"
+    endpoint_env: str = ""
+    model_env: str = ""
 
     @field_validator("endpoint")
     @classmethod
@@ -24,55 +21,59 @@ class ProfileConfig(BaseModel):
             raise ValueError("endpoint must be local")
         return v
 
+    def resolved_endpoint(self) -> str:
+        """Retorna endpoint da env var se definida, senão o default."""
+        if self.endpoint_env:
+            return os.environ.get(self.endpoint_env, self.endpoint)
+        return self.endpoint
+
+    def resolved_model(self) -> str:
+        """Retorna modelo da env var se definida, senão o default."""
+        if self.model_env:
+            return os.environ.get(self.model_env, self.model)
+        return self.model
+
 
 PROFILES = {
     "cpu-triage-v1": ProfileConfig(
         profile="cpu-triage-v1",
-        endpoint=_env("PCSALA_ENDPOINT_CPU_TRIAGE_V1", "http://127.0.0.1:8090"),
-        model=_env(
-            "PCSALA_MODEL_CPU_TRIAGE_V1",
-            "/home/igor/models/ternary-bonsai-2-9b-cpu/"
-            "Ternary-Bonsai-2-9B-PQ2_0.gguf",
-        ),
+        endpoint="http://127.0.0.1:8090",
+        model="/home/igor/models/ternary-bonsai-2-9b-cpu/"
+        "Ternary-Bonsai-2-9B-PQ2_0.gguf",
         timeout_seconds=60,
         max_response_bytes=65536,
+        endpoint_env="PCSALA_ENDPOINT_CPU_TRIAGE_V1",
+        model_env="PCSALA_MODEL_CPU_TRIAGE_V1",
     ),
     "gpu-triage-v1": ProfileConfig(
         profile="gpu-triage-v1",
-        endpoint=_env("PCSALA_ENDPOINT_GPU_TRIAGE_V1", "http://127.0.0.1:8080"),
-        model=_env(
-            "PCSALA_MODEL_GPU_TRIAGE_V1",
-            "/home/igor/models/bonsai-2-27b/"
-            "Ternary-Bonsai-2-27B-PQ2_0.gguf",
-        ),
+        endpoint="http://127.0.0.1:8080",
+        model="/home/igor/models/bonsai-2-27b/"
+        "Ternary-Bonsai-2-27B-PQ2_0.gguf",
         timeout_seconds=60,
         max_response_bytes=65536,
+        endpoint_env="PCSALA_ENDPOINT_GPU_TRIAGE_V1",
+        model_env="PCSALA_MODEL_GPU_TRIAGE_V1",
     ),
     "laguna-programming-v1": ProfileConfig(
         profile="laguna-programming-v1",
-        endpoint=_env(
-            "PCSALA_ENDPOINT_LAGUNA_PROGRAMMING_V1", "http://127.0.0.1:8091"
-        ),
-        model=_env(
-            "PCSALA_MODEL_LAGUNA_PROGRAMMING_V1",
-            "/home/igor/models/laguna-xs-2-1/"
-            "Laguna-XS-2.1-APEX-I-Compact.gguf",
-        ),
+        endpoint="http://127.0.0.1:8091",
+        model="/home/igor/models/laguna-xs-2-1/"
+        "Laguna-XS-2.1-APEX-I-Compact.gguf",
         timeout_seconds=300,
         max_response_bytes=131072,
+        endpoint_env="PCSALA_ENDPOINT_LAGUNA_PROGRAMMING_V1",
+        model_env="PCSALA_MODEL_LAGUNA_PROGRAMMING_V1",
     ),
     "nemotron-ternary-v1": ProfileConfig(
         profile="nemotron-ternary-v1",
-        endpoint=_env(
-            "PCSALA_ENDPOINT_NEMOTRON_TERNARY_V1", "http://127.0.0.1:8083"
-        ),
-        model=_env(
-            "PCSALA_MODEL_NEMOTRON_TERNARY_V1",
-            "/home/igor/models/ternary-nemotron-3.5-30b-a3b/"
-            "Ternary-Nemotron-3.5-Lightning-30B-A3B-GGUF.gguf",
-        ),
+        endpoint="http://127.0.0.1:8083",
+        model="/home/igor/models/ternary-nemotron-3.5-30b-a3b/"
+        "Ternary-Nemotron-3.5-Lightning-30B-A3B-GGUF.gguf",
         timeout_seconds=300,
         max_response_bytes=65536,
+        endpoint_env="PCSALA_ENDPOINT_NEMOTRON_TERNARY_V1",
+        model_env="PCSALA_MODEL_NEMOTRON_TERNARY_V1",
     ),
 }
 

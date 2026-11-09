@@ -75,8 +75,9 @@ def execute(env, command, project, session, task, attempt, prompt,
     _ensure_environment(env, project, session, task, attempt)
     if not _skip_health_check:
         prof = get_profile(profile)
-        if not _check_model_server(prof.endpoint):
-            return _unavailable_result(prof.endpoint)
+        endpoint = prof.resolved_endpoint()
+        if not _check_model_server(endpoint):
+            return _unavailable_result(endpoint)
     with database_lock(env / "state.sqlite"):
         return real_execute(
             env, command, project, session, task, attempt, prompt,
