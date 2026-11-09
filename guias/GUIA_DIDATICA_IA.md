@@ -1,6 +1,6 @@
 # Guia Didático — Gestor de IA (`ia`)
 
-**Data:** 28/10/2026 · **Alvo:** `~/.local/bin/ia` (6 modelos) · **Host:** `pc-sala`
+**Data:** 28/10/2026 (atualizado 09/11/2026 — 20 modelos, regras de escrita §2.1) · **Alvo:** `~/.local/bin/ia` · **Host:** `pc-sala`
 
 Este guia explica o gestor de IA actual de ponta a ponta: o que é, como
 lê a configuração, o que cada comando faz, como trocar de modelo na GPU
@@ -61,6 +61,52 @@ Ficheiro: **`~/.config/ia/modelos.conf`** — array JSON com comentários `#`
 ]
 ```
 
+### 2.1 Regras de escrita — OBRIGATÓRIO para agentes de IA
+
+**Formato único aceite:** array JSON, com comentários `#` em linhas inteiras
+(uma linha `#` é ignorada; o resto é JSON puro). O parser (`_load_config` em
+`~/.local/bin/ia`) faz `json.loads` depois de remover as linhas `#`. Escrever o
+ficheiro em **qualquer outro formato** (pipe `a|b|c`, INI, YAML, lista crua)
+quebra **todo** o gestor: todos os comandos falham com
+`ERRO: configuracao mal formatada: Expecting value: ...`.
+
+**Incidente 2026-11-09 (não repetir):** na substituição maple-preview →
+maple-pro, o `modelos.conf` foi reescrito em formato pipe
+(`alias|caminho|porta|classe|endpoint`) e com apenas 5 entradas; o `ia`
+deixou de funcionar por completo (list/status/doctor). Correção: restaurado em
+JSON com os 20 modelos, base no backup anterior (detalhe em `HANDOFF.md`,
+secção "Correção do gestor ia — 2026-11-09").
+
+**Checklist obrigatório para CRIAR/EDITAR o `modelos.conf`:**
+
+1. **Backup antes de tocar:**
+   `cp ~/.config/ia/modelos.conf ~/.config/ia/modelos.conf.bak-$(date +%Y%m%d)-<motivo>`
+2. **Editar apenas dentro do array JSON**, preservando as entradas existentes.
+   Campos por entrada: `alias`, `model_id`, `name`, `unit`, `endpoint`,
+   `class` (`GPU`|`CPU`), `exclusive_group` (apenas GPU, `gpu-slot-1`),
+   `profile`, `shared` (bool), `startup_timeout` (segundos).
+3. **`unit` tem de existir** (`systemctl cat <unit>`) e **`endpoint` tem de
+   coincidir com a porta do unit** (`systemctl cat <unit> | grep -- --port`).
+4. **Validar antes de fechar a edição:**
+   ```bash
+   python3 - <<'EOF'
+   import json
+   raw = open('/home/igor/.config/ia/modelos.conf').read()
+   body = '\n'.join(l for l in raw.splitlines() if not l.strip().startswith('#'))
+   d = json.loads(body)
+   assert isinstance(d, list)
+   print('OK:', len(d), 'modelos:', ', '.join(m['alias'] for m in d))
+   EOF
+   ```
+5. **Confirmar com o próprio gestor:** `ia list` e `ia doctor` terminam sem
+   erro. Se `ia list` falhar, restaurar o backup imediatamente
+   (`cp <backup> ~/.config/ia/modelos.conf`) e investigar.
+6. **Nunca apagar entradas sem autorização explícita do Igor.** Adicionar,
+   remover ou renomear alias/modelo exige autorização + backup + validação.
+   Renomear um alias (ex.: `maple` → `maple-pro`) muda os comandos do utilizador.
+
+### 2.2 Campos
+
 | Campo | Porque é que importa |
 |---|---|
 | `alias` | o nome curto que escreves no terminal (`ia on nemotron`) |
@@ -72,7 +118,7 @@ Ficheiro: **`~/.config/ia/modelos.conf`** — array JSON com comentários `#`
 | `shared` | `ia off` recusa parar modelos partilhados isoladamente |
 | `startup_timeout` | tempo de tolerância antes de dizer "iniciado mas sem health" |
 
-### Modelos registados (6)
+### Modelos registados (20, em 2026-11-09)
 
 | alias | model_id | classe | porta | unidade | slot |
 |---|---|---|---|---|---|
@@ -81,7 +127,21 @@ Ficheiro: **`~/.config/ia/modelos.conf`** — array JSON com comentários `#`
 | `laguna` | laguna-xs-2.1-cpu | CPU | 8091 | laguna.service | — |
 | `laguna-gpu` | laguna-xs-2.1-gpu | GPU | 8082 | laguna-gpu.service | gpu-slot-1 |
 | `ornith` | ornith-35b-gpu | GPU | 8092 | ornith.service | gpu-slot-1 |
-| `nemotron` | nemotron-3.5-30b-gpu | GPU | 8083 | nemotron.service | gpu-slot-1 |
+| `qwen3-coder` | qwen3-coder-30b-a3b-gpu | GPU | 8084 | qwen3-coder.service | gpu-slot-1 |
+| `clover-35b` | clover-35b-a3b-gpu | GPU | 8085 | clover-35b.service | gpu-slot-1 |
+| `mellum` | mellum2.1-12b-a2.5b-thinking-gpu | CPU | 8086 | mellum-agent.service | — |
+| `tiel-coder` | tiel-coder-35b-a3b-gpu | GPU | 8087 | tiel-coder.service | gpu-slot-1 |
+| `flint` | flint-apex-i-minipplus-v2.1-gpu | GPU | 8094 | flint.service | gpu-slot-1 |
+| `qwen36` | qwen3.6-35b-a3b-q3-k-xl-gpu | GPU | 8096 | qwen36-q3.service | gpu-slot-1 |
+| `qwen36-q4` | qwen3.6-35b-a3b-q4-xl-gpu | GPU | 8098 | qwen36-q4.service | gpu-slot-1 |
+| `devstral` | devstral-small-2507-gpu | GPU | 8097 | devstral.service | gpu-slot-1 |
+| `maple-pro` | maple-pro-cpu | CPU | 8193 | local-maple.service | — |
+| `potato-coder` | potato-coder-12gb-fast | GPU | 8099 | potato-coder.service | gpu-slot-1 |
+| `glm47` | glm-4.7-flash-30b-a3b-gpu | GPU | 8100 | glm47-flash.service | gpu-slot-1 |
+| `fusion4` | fusion4-35b | GPU | 8102 | fusion4.service | gpu-slot-1 |
+| `qwen3-1.7b` | qwen3-1.7b-cpu | CPU | 8103 | qwen3-1.7b-cpu.service | — |
+| `lfm2.5-1.2b` | lfm2.5-1.2b-cpu | CPU | 8104 | lfm2.5-1.2b-cpu.service | — |
+| `qwen2.5-1.5b` | qwen2.5-1.5b-compact | CPU | 8105 | qwen25-15b-compact.service | — |
 
 ---
 
