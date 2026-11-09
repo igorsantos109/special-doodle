@@ -9,6 +9,73 @@ citados foram obtidos com `git diff --stat` e com medições no hardware
 
 ---
 
+## [1.2] — 2026-11-09
+
+**Base:** `e557d5d` (1.1) → `9ab2870` (fase-0) + `2b0c127` (main do
+`special-doodle` — o repositório `ialocalagent` foi arquivado e ficou
+somente-leitura; o `special-doodle` é agora o principal).
+
+### Adicionado
+
+- **Maple-Pro 20B-A1B (CPU) — substitui o maple-preview**:
+  - `local-maple.service` aponta para `maple-pro.gguf` (6,2 GB, SHA-256
+    `df4e257c…f82f`, em `/mnt/arquivos/models/maple-preview/`), 20/24 threads,
+    ctx 32K, porta **8193** em `127.0.0.1`;
+  - perfil `maple-pro-v1` (`inference_profiles.py`) + entradas
+    `maple-preview-cpu`/`maple-pro-cpu` no `models.json` do pcsala-bonsai;
+  - benchmarks: **10,7 tok/s** decode, 93 ms/tok, 687 MB RAM, 70 % HumanEval
+    (limiar atingido), tool calling 6/7 — ver `RELATORIO_MAPLE_PRO_TESTES.md`
+    e `HANDOFF.md`;
+  - testes agênticos profundos (`tests/test_maple_pro_*.py`,
+    `tests/test_context_limit.py`, `tests/test_ctx_*.py`): rodadas R1–R3
+    (chat, raciocínio, tool calling JSON, agulha no palheiro, 5 requisições
+    concorrentes 5/5) + limites de contexto.
+- **Camada CPU agêntica (validação de tool calls + compactação)**:
+  - `qwen3-1.7b-cpu.service` (**8103**) — 1.º portão de tool calls;
+  - `lfm2.5-1.2b-cpu.service` (**8104**) — fallback de validação;
+  - `qwen25-15b-compact.service` (**8105**) — compactador de contexto em lote;
+  - `src/pcsala_agent/cpu_agent.py` + `tests/test_cpu_agent.py`
+    (`validate_tool_call`, evento `TOOL_CALL_VALIDATED`);
+  - perfil `cpu-agent-v1` com rotas 8103/8104/8105; ModelSpecs
+    `qwen3-1.7b-cpu` (shared), `lfm2.5-1.2b-cpu` (shared),
+    `qwen2.5-1.5b-compact` (não shared).
+- `deploy/systemd/bonsai2-cpu-localhost-jinja.conf` — drop-in `127.0.0.1`
+  + jinja para `bonsai2-cpu.service`.
+- **Regras de escrita do `~/.config/ia/modelos.conf`** (proteção contra
+  agentes de IA): secção `guias/GUIA_DIDATICA_IA.md` §2.1 (formato único
+  array JSON, checklist backup → validação → `ia list`/`ia doctor`),
+  aviso em `PROJECT_STATE.md`, incidente registado em `HANDOFF.md`.
+
+### Corrigido
+
+- **Gestor `ia` parado por configuração em formato errado (2026-11-09)**:
+  o `modelos.conf` tinha sido reescrito em formato pipe
+  (`alias|caminho|porta|classe|endpoint`) durante a troca maple-pro; todos os
+  comandos falhavam com `ERRO: configuracao mal formatada`. Restaurado em
+  JSON com os 20 modelos actuais (base no backup 2026-11-08); backup do
+  ficheiro corrompido em `modelos.conf.bak-20261109-formato-errado`.
+- **Bug X6** — `real_graph.py` agora usa `resolved_endpoint()` /
+  `resolved_model()` do perfil (endpoints dinâmicos por variável de ambiente
+  em runtime).
+
+### Alterado
+
+- `inference_profiles.py`: `ProfileConfig` ganhou campos de rota
+  (`max_response_bytes`, etc.) + `resolved_endpoint()` / `resolved_model()`;
+- `model_manager.py`: ModelSpecs da camada CPU + `maple-pro-cpu`;
+- `graph_runner.py` / `models_cli.py` / `task_queue.py`: ajustes da camada
+  CPU agêntica;
+- `guias/GUIA_DIDATICA_IA.md`: tabela de modelos 6 → 20;
+- `HANDOFF.md`: secção maple-pro (substituição, benchmarks, firewall) +
+  testes agênticos + limites de contexto + correção do gestor ia.
+
+### Suíte
+
+- Testes CPU agênticos, mapa-pro (R1–R3) e de limites de contexto incluídos
+  em `fase-0`; suíte de base 1.1 (498) não alterada por esta entrada.
+
+---
+
 ## [1.1] — 2026-10-28
 
 **Base:** versão anterior `8cb6269` (2026-10-24) → `e557d5d` (2026-10-28),
