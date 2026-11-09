@@ -276,6 +276,33 @@ O diff do novo PR conterá **apenas as 4 alterações funcionais** (inference_ad
 
 ---
 
+### Testes Agenticos Profundos (2026-11-09, via SSH túnel 127.0.0.1:18193 -> 8193 remota)
+
+Execução: 3 rodadas (6 + 5 + 1 teste de carga) contra `POST /v1/chat/completions` modelo `maple-pro`.
+
+| Rodada | Teste | Resultado |
+|--------|-------|-----------|
+| R1 | Chat simples (pt-BR) | ✅ 200, 15.7 tok/s |
+| R1 | Raciocínio matemático (desconto) | ✅ R$ 127,25 correto |
+| R1 | Função Python (primos ordenados) | ✅ Código completo |
+| R1 | Planejamento agente (suporte PC não liga) | ✅ 5 passos + justificativa |
+| R1 | Tool calling simulado (JSON) | ✅ JSON válido |
+| R1 | Resumo de texto longo (666 tok) | ✅ 3 bullets pt-BR |
+| R2c | Cavaleiros e knaves (CoT) | ⚠️ reasoning 4509 tok, content truncado (max_tokens consome reasoning+resposta) |
+| R2c | Formato rígido (5 economias 2024) | ✅ formato exato, finish=stop |
+| R2c | Consistência 3x "17 x 23" | ✅ 3x "391", consistente e correto |
+| R2c | Agulha no palheiro (1631 prompt tok) | ✅ "Paris", finish=stop |
+| R2c | Raciocínio espacial (caixas) | ✅ "dentro da caixa verde" |
+| R3 | Carga concorrente (5 reqs paralelas) | ✅ 5/5 sucesso, makespan 13.4s, 0.37 req/s |
+
+**Throughput médio (decode):** ~15.3 tok/s (CPU pura, `-ngl 0`, 20 threads). Memória: ~6.8 GB RSS.
+**Reasoning_format deepseek:** ativo — `reasoning_content` visível em todas as respostas (não-stream e streaming SSE).
+**Limite importante:** `max_tokens` é consumido tanto pelo `reasoning_content` quanto pela resposta visível. Para respostas longas com reasoning, usar `max_tokens` elevado (>= 1500).
+
+Arquivos gerados: `tests/test_maple_pro_deep.py`, `tests/test_maple_pro_round2.py`, `tests/test_maple_pro_round2b.py`, `tests/test_maple_pro_round2c.py`, `tests/test_maple_pro_round3_concorrencia.py`, `RELATORIO_MAPLE_PRO_TESTES.md`.
+
+---
+
 ### Firewall/Intranet — Porta 8193
 
 | Verificação | Status |
