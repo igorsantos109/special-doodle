@@ -362,3 +362,54 @@ Arquivos gerados: `tests/test_maple_pro_deep.py`, `tests/test_maple_pro_round2.p
 
 ### Última atualização
 2026-11-09, agente DSH (sessão pc-sala-agent).
+
+---
+
+## Atualização — Correção do gestor ia (2026-11-09)
+
+### Problema
+O gestor diário `ia` (`~/.local/bin/ia`) falhava em **todos** os comandos
+(`list`, `status`, `doctor`, `on`, `off`, `solo`) com:
+
+```
+ERRO: configuracao mal formatada: Expecting value: line 2 column 1 (char 1)
+```
+
+### Causa raiz
+`~/.config/ia/modelos.conf` foi reescrito a 2026-11-09 05:10 (durante a
+substituição maple-preview → maple-pro) em formato pipe
+(`alias|caminho|porta|classe|endpoint`) com apenas 5 modelos CPU. O parser do
+`ia` (`_load_config`) exige **array JSON** (linhas `#` são comentários; o resto
+é `json.loads`). Nenhum outro componente lê o ficheiro — o formato pipe não era
+consumido por nada.
+
+### Correção
+- Backup do ficheiro corrompido:
+  `~/.config/ia/modelos.conf.bak-20261109-formato-errado`.
+- `modelos.conf` reescrito em JSON com **20 modelos**, base no último backup
+  válido (`modelos.conf.bak-20261108-pre-remocao-flint-ternary`), com:
+  - `maple-pro` (substitui `maple`/maple-preview): `local-maple.service`,
+    8193, `model_id maple-pro-cpu`, perfil `maple-pro-v1`;
+  - adição da camada CPU agêntica: `qwen3-1.7b` (8103), `lfm2.5-1.2b` (8104),
+    `qwen2.5-1.5b` (8105);
+  - remoção de `flint-ternary` (unidade já inexistente).
+- Ficheiro fora do repositório (`~/.config/ia/`, não versionado) — a proteção
+  contra repetição é documental.
+
+### Regra de ouro para futuras edições (ver `guias/GUIA_DIDATICA_IA.md` §2.1)
+1. Backup antes de editar (`cp modelos.conf modelos.conf.bak-<data>-<motivo>`).
+2. Formato **apenas** array JSON com comentários `#` em linha inteira;
+   `alias|...` pipe, INI, YAML ou lista crua **quebram todo o gestor**.
+3. Validar com `python3 -c "import json,sys; ..."` (one-liner no §2.1).
+4. `ia list` e `ia doctor` sem erro; em caso de falha, restaurar o backup.
+5. Nunca apagar/renomear entradas sem autorização explícita do Igor.
+
+### Verificação (2026-11-09)
+| Comando | Resultado |
+|---|---|
+| `ia list` | OK — 20 modelos |
+| `ia status` | bonsai GPU, maple-pro, qwen3-1.7b, lfm2.5-1.2b e bonsai-cpu running/funcional |
+| `ia doctor` | "Nenhum problema encontrado" (P40 13 GB usados, RAM, disco, endpoints) |
+
+### Última atualização
+2026-11-09, sessão Kilo (correção do gestor ia + regras de escrita).
