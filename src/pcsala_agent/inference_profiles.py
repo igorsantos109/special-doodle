@@ -75,6 +75,15 @@ PROFILES = {
         endpoint_env="PCSALA_ENDPOINT_NEMOTRON_TERNARY_V1",
         model_env="PCSALA_MODEL_NEMOTRON_TERNARY_V1",
     ),
+    "maple-pro-v1": ProfileConfig(
+        profile="maple-pro-v1",
+        endpoint="http://127.0.0.1:8193",
+        model="/mnt/arquivos/models/maple-preview/maple-pro.gguf",
+        timeout_seconds=300,
+        max_response_bytes=65536,
+        endpoint_env="PCSALA_ENDPOINT_MAPLE_PRO_V1",
+        model_env="PCSALA_MODEL_MAPLE_PRO_V1",
+    ),
 }
 
 
