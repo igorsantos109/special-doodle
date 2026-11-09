@@ -254,12 +254,13 @@ def _tokenize_resp(_urlopen, *args, **kwargs):
 
 def _profile_config(profile):
     from .inference_profiles import get_profile
+    prof = get_profile(profile)
     return InferenceConfig(
-        endpoint=get_profile(profile).endpoint,
-        model=get_profile(profile).model,
-        timeout_seconds=get_profile(profile).timeout_seconds,
-        max_response_bytes=get_profile(profile).max_response_bytes,
-        api_key_env=get_profile(profile).api_key_env,
+        endpoint=prof.resolved_endpoint(),
+        model=prof.resolved_model(),
+        timeout_seconds=prof.timeout_seconds,
+        max_response_bytes=prof.max_response_bytes,
+        api_key_env=prof.api_key_env,
     )
 
 
