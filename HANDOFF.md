@@ -136,3 +136,41 @@ Reversão: não instalar a candidata; em desenvolvimento, aplicar patch reverso 
 A cópia é versionada como 1.0.1rc1 para não confundir o wheel corrigido com a versão 1.0.0.
 Limite conhecido: ruff global tem avisos antigos; nenhuma nova ocorrência é aceita; comparação em evidence/.
 Próximo: revisão independente, validação no Python 3.11 da CI e inspeção local autorizada; não promover automaticamente.
+
+
+---
+
+## Atualização T01-F1 — PR corrigido para fase-0 (2026-11-08)
+
+### T01-F1: Corrigir o PR — **EXECUTADO**
+Branch `fase-0` criada a partir de `origin/main` com **apenas as correções** (5 commits cherry-picked):
+- `64a1736` fix(rc1): correções R01–R09 e extras
+- `935b8de` D01-F1: testes falhas InferenceAdapter
+- `b8807bf` test(debug): 22 testes injeção falha
+- `e127c39` fix(debugger, REV-F1): corrige testes/ruído
+- `640a099` E01: não deixa tarefa em RESERVED
+
+### Estado actual
+| Branch | Conteúdo |
+|--------|----------|
+| `origin/main` | 1 commit (38d4644) — sem `src/pcsala_agent` |
+| `origin/fase-0` | 18 commits — histórico fase-0 original (PASSOS 1-5, D01-F1) |
+| `fase-0` (local + push) | 23 commits — fase-0 + 5 correções R01–R09 + debugger + E01 |
+| `fix/rc1-correcoes` | 38 commits — fase-0 + correções + espelho 28/10 + T01-F2/F3 docs |
+
+### Próximo passo (requer acção do Igor no GitHub)
+1. **Fechar PR #2** (`fix/rc1-correcoes` → `main`)
+2. **Abrir novo PR**: `fix/rc1-correcoes` → `fase-0` (ou `fase-0` → `main` se preferir merge directo)
+
+O diff do novo PR conterá **apenas as 4 alterações funcionais** (inference_adapter, models_cli, task_queue, graph_runner) + testes + docs de entrega — sem os 56 erros ruff legados do espelho 28/10.
+
+### CI esperada
+- Python 3.13 ✅ (já alinhado)
+- `requirements.lock` regenerado ✅
+- Ruff: **deve passar** — apenas ficheiros corrigidos no diff
+- Testes: **569 passed** ✅
+
+---
+
+## Última atualização
+2026-11-08, agente DSH (sessão pc-sala-agent).
