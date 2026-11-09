@@ -278,7 +278,7 @@ O diff do novo PR conterá **apenas as 4 alterações funcionais** (inference_ad
 
 ### Testes Agenticos Profundos (2026-11-09, via SSH túnel 127.0.0.1:18193 -> 8193 remota)
 
-Execução: 3 rodadas (6 + 5 + 1 teste de carga) contra `POST /v1/chat/completions` modelo `maple-pro`.
+Execução: 4 rodadas contra `POST /v1/chat/completions` modelos CPU.
 
 | Rodada | Teste | Resultado |
 |--------|-------|-----------|
@@ -294,6 +294,19 @@ Execução: 3 rodadas (6 + 5 + 1 teste de carga) contra `POST /v1/chat/completio
 | R2c | Agulha no palheiro (1631 prompt tok) | ✅ "Paris", finish=stop |
 | R2c | Raciocínio espacial (caixas) | ✅ "dentro da caixa verde" |
 | R3 | Carga concorrente (5 reqs paralelas) | ✅ 5/5 sucesso, makespan 13.4s, 0.37 req/s |
+
+**Limites de contexto por modelo CPU (verificados em 192.168.1.184):**
+
+| Modelo | Porta | Contexto máx | 65k tokens | 100k tokens | Agulha no palheiro (ctx máx) |
+|--------|-------|-------------|------------|-------------|------------------------------|
+| maple-pro-20b | 8193 | 32.768 | ❌ 400 | ❌ 400 | ⚠️ HTTP 200 mas resposta vazia (reasoning esgotou max_tokens) |
+| qwen3-1.7b | 8103 | 8.192 | ❌ 400 | ❌ 400 | ✅ acertou VERDE-4482 (7.854 prompt, 69.6s) |
+| lfm2.5-1.2b | 8104 | 8.192 | ❌ 400 | ❌ 400 | ✅ acertou VERDE-4482 (7.566 prompt, 32.2s) |
+| bonsai-9b-cpu | 8090 | 32.768* | n/t | n/t | n/t (muito lento, timeout) |
+
+*n/t = não testado (bonsai-9b-cpu extremamente lento, timeout em 4k/8k chars)
+
+**Conclusão contexto:** nenhum modelo suporta 65k ou 100k tokens. Limites reais: maple-pro 32k, qwen3 e lfm2.5 8k.
 
 **Throughput médio (decode):** ~15.3 tok/s (CPU pura, `-ngl 0`, 20 threads). Memória: ~6.8 GB RSS.
 **Reasoning_format deepseek:** ativo — `reasoning_content` visível em todas as respostas (não-stream e streaming SSE).
