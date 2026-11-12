@@ -1,0 +1,17 @@
+# Codex CLI apontando para o Strata no PC-SALA via túnel SSH local 18081 -> 8081
+# túnel: ssh -N -L 18081:127.0.0.1:8081 igor@192.168.1.184
+model = "qwen3.8-flash-next-gyro-gyro-s"
+model_provider = "strata"
+model_context_window = 131072
+model_auto_compact_token_limit = 110000
+model_reasoning_summary = "auto"
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+check_for_update_on_startup = false
+
+[model_providers.strata]
+name = "Strata PC-SALA (local tunnel)"
+base_url = "http://127.0.0.1:18081/v1"
+wire_api = "responses"
+env_key = "STRATA_API_KEY"
+stream_idle_timeout_ms = 600000

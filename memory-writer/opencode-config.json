@@ -1,0 +1,33 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "strata/qwen3.8-flash-next-gyro-gyro-s",
+  "small_model": "strata/qwen3.8-flash-next-gyro-gyro-s",
+  "autoupdate": false,
+  "compaction": {
+    "auto": true,
+    "buffer": 20000
+  },
+  "share": "disabled",
+  "provider": {
+    "strata": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Strata PC-SALA (local tunnel)",
+      "options": {
+        "baseURL": "http://127.0.0.1:18081/v1",
+        "apiKey": "strata-local"
+      },
+      "models": {
+        "qwen3.8-flash-next-gyro-gyro-s": {
+          "name": "Qwen3.8-Flash-Next Gyro-S (PC-SALA, 128K)",
+          "tool_call": true,
+          "reasoning": true,
+          "limit": {
+            "context": 131072,
+            "input": 120000,
+            "output": 8192
+          }
+        }
+      }
+    }
+  }
+}

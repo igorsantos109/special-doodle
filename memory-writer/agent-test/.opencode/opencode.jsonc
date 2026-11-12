@@ -1,0 +1,55 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "shell": "/bin/sh",
+  "model": "strata/gyro-s",
+  "small_model": "strata-cpu/qwen3-1.7b",
+  "provider": {
+    "strata-cpu": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Qwen3 1.7B CPU (título/resumo)",
+      "options": {
+        "baseURL": "http://127.0.0.1:18103/v1",
+        "apiKey": "local"
+      },
+      "models": {
+        "qwen3-1.7b": {
+          "name": "Qwen3 1.7B Q4 (CPU)",
+          "limit": { "context": 32768, "output": 2048 }
+        }
+      }
+    },
+    "strata": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Strata PC-SALA (Gyro-S 128K)",
+      "options": {
+        "baseURL": "http://127.0.0.1:18081/v1",
+        "apiKey": "strata-local",
+        "timeout": 900000
+      },
+      "models": {
+        "gyro-s": {
+          "name": "Qwen3.8-Flash-Next Gyro-S (128K, Strata)",
+          "tool_call": true,
+          "limit": { "context": 131072, "input": 120000, "output": 16384 }
+        }
+      }
+    }
+  },
+  "mcp": {
+    "servers": {
+      "memory-writer": {
+        "type": "local",
+        "command": [
+          "python3",
+          "/home/igor/ia-sh/pc-sala-agent/memory-writer/memory_writer_mcp.py"
+        ],
+        "environment": {
+          "MEMORY_WRITER_ENDPOINT": "http://127.0.0.1:18081/v1/chat/completions",
+          "MEMORY_WRITER_MODEL": "qwen3.8-flash-next-gyro-gyro-s",
+          "MEMORY_WRITER_TEMPERATURE": "0.6",
+          "MEMORY_DB": "/home/igor/ia-sh/pc-sala-agent/memory-writer/memory.db"
+        }
+      }
+    }
+  }
+}

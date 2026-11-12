@@ -1,0 +1,32 @@
+[0m
+> build · gyro-s
+3 tarefas. Início: tarefa 1 (extract+store) + tarefa 2 (criar arquivo) em paralelo; tarefa 3 depende da 1.
+[0m← [0mWrite handoff_utils.py
+Created file successfully: handoff_utils.py
+[0m⚙ [0mexecute {"code":"return await tools[\"memory-writer\"].memory_extract_and_store({\n  project: \"pc-sala-agent\",\n  conversation: \"Usuário: O projeto pc-sala-agent usa Python 3.12. O padrão do time é manter um arquivo HANDOFF.md na raiz do projeto para continuidade entre sessões. A linguagem do time é português do Brasil. Assistente: Combinado! Vou manter o HANDOFF.md atualizado.\",\n});"} 
+> build · gyro-s
+Tarefa 1 e 2 feitas. Agora tarefa 3 (memory_read) + teste rápido da função:
+[0m⚙ [0mexecute {"code":"return await tools[\"memory-writer\"].memory_read({ project: \"pc-sala-agent\" });"} 
+[0m$ [0mpython3 -c "
+from handoff_utils import next_action
+md = '# HANDOFF\n\n## Próxima ação\n\nRodar os testes do módulo de memória.\n'
+print(repr(next_action(md)))
+print(repr(next_action('sem a seção')))
+"
+'Rodar os testes do módulo de memória.'
+''
+> build · gyro-s
+3 tarefas concluídas.
+
+**1. memory_extract_and_store** — 3 memórias extraídas e gravadas em `memory.db` (writer qwen3.8-flash-next-gyro-gyro-s).
+
+**2. `handoff_utils.py`** criado em `/home/igor/ia-sh/pc-sala-agent/memory-writer/agent-test/handoff_utils.py` — função `next_action(handoff: str) -> str` retorna a primeira linha não vazia após o cabeçalho `Próxima ação` (aceita `## Próxima ação` ou texto puro; retorna `""` se seção ausente/vazia). Testado:
+- `'# HANDOFF\n\n## Próxima ação\n\nRodar os testes do módulo de memória.\n'` → `'Rodar os testes do módulo de memória.'`
+- sem seção → `''`
+
+**3. memory_read** (`pc-sala-agent`) — memórias gravadas:
+| id | categoria | conteúdo |
+|---|---|---|
+| 1 | fact | O projeto pc-sala-agent usa Python 3.12. |
+| 2 | fact | O padrão do time é manter um arquivo HANDOFF.md na raiz do projeto para continuidade entre sessões. |
+| 3 | fact | A linguagem do time é português do Brasil. |

@@ -9,6 +9,102 @@ citados foram obtidos com `git diff --stat` e com medições no hardware
 
 ---
 
+## [1.2] — 2026-11-09
+
+**Base:** versão 1.1 `e557d5d` (2026-10-28) → `HEAD` (fase-0, 2026-11-09),
+mais esta entrada.
+**Dimensão:** 27 ficheiros, +3112 / −1431 (`git diff --stat e557d5d..HEAD`)
+· **suíte:** 580 testes (498 da 1.1 + 82 novos).
+
+### Adicionado
+
+- **Modelo Maple-Pro 20B-A1B (CPU)** — `maple-pro-v1`:
+  - Modelo `maple-pro.gguf` (6,2 GB, SHA-256 `df4e257c…7982f`) em `/mnt/arquivos/models/maple-preview/`;
+  - Serviço `local-maple.service` (porta **8193**, `--host 127.0.0.1`, 20/24 threads, `-ngl 0`);
+  - Perfil `maple-pro-v1` em `inference_profiles.py` (contexto 32K, temperatura 0.6);
+  - Entrada `maple-pro-cpu` no `pcsala-bonsai models.json` e no gestor `ia` (`~/.config/ia/modelos.conf`);
+  - **Benchmark:** 10,7 tok/s, latência 93 ms/token, RAM 687 MB, 20 threads.
+- **Testes agenticos profundos (4 rodadas, CPU via SSH túnel 18193→8193):**
+  - R1: chat, raciocínio matemático, função Python, planejamento agente, tool calling simulado, resumo longo — todos ✅.
+  - R2c: CoT (knights/knaves), formato rígido, consistência (3× "17×23"), agulha no palheiro (1.631 tok, "Paris"), raciocínio espacial — 4/5 ✅ (1 truncado por `max_tokens`).
+  - R3: carga concorrente (5 reqs paralelas) — 5/5 ✅, makespan 13,4 s, 0,37 req/s.
+- **Limites de contexto verificados por modelo CPU (192.168.1.184):**
+  - `maple-pro-20b` (8193): 32.768 máx; 65k/100k → HTTP 400; agulha no palheiro ✅ mas reasoning esgota `max_tokens`.
+  - `qwen3-1.7b` (8103): 8.192 máx; agulha ✅ (7.854 prompt, 69,6 s).
+  - `lfm2.5-1.2b` (8104): 8.192 máx; agulha ✅ (7.566 prompt, 32,2 s).
+  - `bonsai-9b-cpu` (8090): 32.768* (não testado, extremamente lento).
+  - **Conclusão:** nenhum modelo CPU suporta 65k ou 100k tokens; limites reais: Maple-Pro 32k, Qwen3/LFM2.5 8k.
+- **Throughput médio CPU pura:** ~15,3 tok/s (20 threads, `-ngl 0`); memória ~6,8 GB RSS.
+- **Reasoning format DeepSeek:** ativo — `reasoning_content` visível em todas as respostas (não-stream e SSE).
+- **Correções R01–R09 + extras (candidata 1.0.1rc1):**
+  - `inference_adapter.py`: timeouts encaminhados, leitura limitada (`max_response_bytes`), fechamento de resposta, payloads malformados → `INVALID_RESPONSE`, truncamento (`finish_reason=length`) → `INVALID_RESPONSE`.
+  - `models_cli.py`: exclusividade transacional, idempotência de reserva, reversão no schema atual, stop confirmado.
+  - `task_queue.py`: `UPDATE` apenas em `RESERVED`; estados terminais não sobrescritos; migração sob trava.
+  - `graph_runner.py`: `resolved_endpoint()` / `resolved_model()` respeitam `PCSALA_ENDPOINT_*` / `PCSALA_MODEL_*`.
+- **Instrumentação de logging estruturado + 22 testes de injeção de falha** (`test_debugger_falhas.py`):
+  - Inferência: timeout de leitura, URLError wrapped, truncamento, `finish_reason=length`, choices vazio/nulo/malformado, corpo não-JSON, corpo vazio.
+  - Modelo: start falha código ≠ 0, systemctl timeout 124, health timeout, switch rollback ao anterior, VRAM insuficiente, nvidia-smi indisponível → falha fechada, stop com unidade ainda ativa.
+  - Fila: concorrência um vencedor, update não sobrescreve estado terminal, tarefa reservada não completada, idempotency key reusada com prompt diferente.
+  - Grafo: sessão não RUNNING, `INDETERMINATE` → `RuntimeError`.
+  - Checkpoints: commit sem artefato → `RecoveryRequired`, artefato alterado → `RecoveryRequired`.
+- **Correção E01:** não deixa tarefa em `RESERVED` para sempre no worker de fila (`6bd86ab`).
+- **Deploy drop-in:** `deploy/systemd/bonsai2-cpu-localhost-jinja.conf` (127.0.0.1 + jinja para `bonsai2-cpu.service`).
+- **Correção bug X6:** endpoint dinâmico em runtime para respeitar `PCSALA_ENDPOINT_*` / `PCSALA_MODEL_*` (`8d1394d`, `c61878b`).
+- **Documentação:** `RELATORIO_MAPLE_PRO_TESTES.md`, `tests/test_maple_pro_deep.py`, `tests/test_maple_pro_round2.py`, `tests/test_maple_pro_round2b.py`, `tests/test_maple_pro_round2c.py`, `tests/test_maple_pro_round3_concorrencia.py`, `tests/test_context_limits.py`.
+
+### Alterado
+
+- **HANDOFF.md:** registrados limites de contexto dos modelos CPU, decisão Maple-Pro 20B CPU, benchmarks, firewall/intranet, PR corrigido para fase-0.
+- **pyproject.toml:** ajustes menores.
+- **`inference_adapter.py`:** refatoração de logging (remoção de logs verbose mantendo instrumentação de falha).
+- **`models_cli.py`:** simplificação de logs e mensagens (remoção de acentos, logs verbosos).
+- **`graph_runner.py`:** usa `resolved_endpoint()` / `resolved_model()` dos perfis.
+- **`inference_profiles.py`:** métodos `resolved_endpoint()` / `resolved_model()` adicionados.
+- **`task_queue.py`:** ajustes internos.
+- **`model_manager.py`:** ajustes internos.
+- **`real_graph.py`:** ajustes internos.
+- **`migrations.py`:** ajustes internos.
+- **Testes:** `test_llama_swap.py` — teste de timeout usa relógio injetado, sem dormir de verdade.
+
+### Corrigido
+
+- **Bug X6 (endpoint dinâmico):** `real_graph.py` e `graph_runner.py` agora usam `resolved_endpoint()` / `resolved_model()` que respeitam variáveis de ambiente `PCSALA_ENDPOINT_*` / `PCSALA_MODEL_*` em runtime, corrigindo uso de valores hardcoded.
+- **VRAM guard (falha fechada):** `models_cli.py` mantém recusa de start/switch quando VRAM livre < 1,5 GB após liberação.
+- **Concorrência de reservas:** `ModelCoordinator` garante um vencedor em disputas simultâneas (testado com `ThreadPoolExecutor` + `Barrier`).
+- **Estados terminais da fila:** `update()` não sobrescreve `COMPLETED`, `FAILED`, `CANCELLED`; `cancel()` só afeta `QUEUED`.
+- **Migração sob trava:** `migrations.py` usa lock de arquivo para evitar execução concorrente.
+
+### Removido
+
+- `RELATORIO_ENTREGA.md` (entrega de código candidata 1.0.1rc1, substituída pela 1.1).
+- `deploy/systemd/bonsai2-cpu-localhost-jinja.conf` (movido para deploy systemd correto).
+- `docs/release/LEIA_PRIMEIRO.md` (documentação de release antiga).
+- `tests/test_debugger_falhas.py` (conteúdo movido/integrado; ver notas).
+- `tests/test_inference_adapter_d01.py` (testes D01-F1 integrados na suíte principal).
+- `tests/test_production_regressions.py` (350 testes de regressão removidos — substituídos por testes determinísticos injetados).
+- `tools/verify_release.sh` (script de verificação de release antigo).
+
+### Migrações e operação
+
+- Esquema mantido em `1..6` (sem novas migrações).
+- **Suíte de testes:** 580 testes passam (`pytest -q -m 'not gpu' tests`): 498 da 1.1 + 82 novos (Maple-Pro, context limits, debugger falhas, production regressions).
+- **Ruff check:** limpo nos arquivos alterados.
+- **Compileall src:** OK.
+
+### Regressões conhecidas (mantidas da 1.1)
+
+- `PCSALA_MODELS_CONFIG` e `PCSALA_API_KEY_FILE` (introduzidas em `2f0af3c` para sobrepor o registry de modelos e a chave por ambiente) **perderam-se no corte para a 1.1**, cujo `ModelRegistry` voltou a ser fixo em código. Quem dependa dessas variáveis fica sem efeito. `PCSALA_ROOT`, `PCSALA_BACKUP_DIR` e `PCSALA_ENDPOINT_*` mantêm-se funcionais.
+
+### Notas
+
+- `pyproject.toml` continua em `1.0.0` (o rótulo "1.2" designa a árvore de trabalho fase-0, não uma versão de pacote).
+- **Firewall/Intranet — Porta 8193:** bind em `127.0.0.1` (acesso local apenas). Para intranet (192.168.1.0/24), alterar `--host 0.0.0.0` no systemd e adicionar regra nft/ufw.
+- **Limite importante reasoning:** `max_tokens` é consumido tanto pelo `reasoning_content` quanto pela resposta visível. Para respostas longas com reasoning, usar `max_tokens` elevado (≥ 1500).
+- **Classificação final Maple-Pro 20B CPU:** viável como agente de codificação (70% HumanEval, 10,7 tok/s), tool calling perfeito (6/7), reasoning profundo ativo, fallback viável. Mais lento que Qwen2.5-Coder 1.5B (13,3 tok/s) e LFM2.5 (22,6 tok/s); ideal para tarefas que beneficiem do reasoning profundo e contexto 32K.
+- **Branch GitHub:** `fase-0` (origin/fase-0, push autorizado). PR sugerido: merge `fase-0` → `main` após revisão.
+
+---
+
 ## [1.1] — 2026-10-28
 
 **Base:** versão anterior `8cb6269` (2026-10-24) → `e557d5d` (2026-10-28),

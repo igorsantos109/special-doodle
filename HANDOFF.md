@@ -360,5 +360,444 @@ Arquivos gerados: `tests/test_maple_pro_deep.py`, `tests/test_maple_pro_round2.p
 
 ---
 
+
+---
+
 ### Última atualização
 2026-11-09, agente DSH (sessão pc-sala-agent).
+
+---
+
+### Atualização — Novos modelos CPU: Phi-3.5-mini + SmolLM2-1.7B (2026-11-11)
+
+### Objetivo
+Baixar 2 modelos CPU-only e incorporar ao gestor `ia`, mantendo padrões da casa.
+
+### FASE 1: Download (Concluído)
+| Modelo | Ficheiro | Bytes | SHA256 | Origem HF |
+|--------|----------|-------|--------|-----------|
+| Phi-3.5-mini Q4_K_M | `Phi-3.5-mini-instruct-Q4_K_M.gguf` | 2 393 232 672 | `e4165e3a71af97f1b4820da61079826d8752a2088e313af0c7d346796c38eff5` | `bartowski/Phi-3.5-mini-instruct-GGUF` |
+| SmolLM2-1.7B Q4_K_M | `SmolLM2-1.7B-Instruct-Q4_K_M.gguf` | 1 055 609 824 | `77665ea4815999596525c636fbeb56ba8b080b46ae85efef4f0d986a139834d7` | `bartowski/SmolLM2-1.7B-Instruct-GGUF` |
+
+SHA256 verificado igual no download local e na remota (rsync retomável após 1
+transferência parcial de 1,5 GB).
+
+### FASE 2: Pesos no padrão da casa (Concluído)
+- `/mnt/arquivos/models/phi-3.5-mini-cpu/` e `/mnt/arquivos/models/smollm2-1.7b-cpu/`
+- Symlinks: `~/models/phi-3.5-mini-cpu`, `~/models/smollm2-1.7b-cpu`
+
+### FASE 3: Units systemd (Concluído)
+| Item | phi35-mini-cpu.service | smollm2-1.7b-cpu.service |
+|------|------------------------|--------------------------|
+| **Porta** | 8106 | 8107 |
+| **Estado** | enabled + active (residente) | static, sob demanda (sem `[Install]`) |
+| **Contexto** | 32768 | 8192 |
+| **Flags** | PrismML CPU build, `-ngl 0 --threads 24 --no-kv-offload -n 2048 --parallel 1 --jinja --reasoning off --reasoning-format none` | idem (sem reasoning) |
+| **Redes de segurança** | — | `RuntimeMaxSec=900` + `MemoryMax=4G` + `Restart=no` (padrão compactador) |
+
+**Desvio documentado:** unit do Phi criada com `-c 131072` (treino 128K) →
+**OOM killer em 13 restarts** na carga (KV 128K excede RAM livre ~30 GB neste
+build). Reduzido para `-c 32768` (padrão maple); carga ~30 s, estável.
+
+### FASE 4: Gestor ia (Concluído)
+- Backup: `~/.config/ia/modelos.conf.bak-20261111-novo-phi35-smollm2`
+- 2 entradas JSON acrescentadas (20 → 22 modelos):
+  - `phi35-mini` → `phi-3.5-mini-cpu`, 8106, perfil `cpu-agent-v1`, shared
+  - `smollm2-1.7b` → `smollm2-1.7b-cpu`, 8107, sem perfil, shared=false
+- Validação (regra de ouro §2.1): JSON válido, `ia list` OK, `ia doctor` →
+  "Nenhum problema encontrado" (8106 e 8107 running/HTTP 200).
+
+### Verificação funcional
+| Teste | Resultado |
+|-------|-----------|
+| Phi "capital da França" | ✅ 200, finish=stop, "Paris é a capital da França." (6,7 tok/s) |
+| Phi desconto 20% R$ 99,90 | ✅ conta passo a passo (truncou em max_tokens=300, comportamento normal) |
+| SmolLM2 compaction (resumo 3 bullets do PC-SALA) | ✅ 200, finish=stop, 16,3 tok/s, resumo coerente |
+
+### Restrições respeitadas
+- Sem alteração de modelos GPU, Laguna, firewall (tudo loopback 127.0.0.1).
+- Sem código do repo alterado: registro em `model_manager.py`/`inference_profiles.py`
+  (pcsala CLI) **não feito** — requer autorização.
+
+### Próximos passos (se autorizado)
+1. Registrar `phi-3.5-mini-cpu` e `smollm2-1.7b-cpu` em `model_manager.py` + perfis.
+2. Benchmark llama-bench (pp512/tg128) dos dois modelos CPU.
+3. Atualizar `guias/` com os modelos 8106/8107.
+
+### Última atualização
+2026-11-11, agente DSH (sessão pc-sala-agent).
+
+---
+
+### Atualização — API/firewall liberado para 8106/8107 (2026-11-11)
+
+### Pedido
+Liberar API e firewall dos modelos novos (phi35-mini 8106, smollm2-1.7b 8107) na intranet,
+mantendo o padrão da casa: **apenas de 192.168.1.170** (PC do Igor), sem chave API
+(política existente: "API obrigatoria, API key nao").
+
+### Executado e VERIFICADO
+| Item | Detalhe |
+|------|---------|
+| Backup nft | `/etc/pcsala-bonsai-api.nft.bak-20261111-phi35-smollm2` |
+| nft `pcsala_api` | `8106, 8107` acrescentados aos 3 conjuntos (lo accept, enp6s0 accept saddr 192.168.1.170, drop) — persiste via `pcsala-bonsai-firewall.service` (oneshot, carrega `/etc/pcsala-bonsai-api.nft` no boot) |
+| ufw | `8106/tcp` e `8107/tcp` ALLOW apenas de `192.168.1.170` |
+| Units | `--host 127.0.0.1` → `--host 0.0.0.0` em `phi35-mini-cpu.service` e `smollm2-1.7b-cpu.service`; daemon-reload + restart |
+
+### Verificação (3 caminhos)
+| Caminho | Resultado |
+|---------|-----------|
+| Intranet: `http://192.168.1.184:8106/v1/models` (de 192.168.1.170) | ✅ 200 |
+| Intranet: `http://192.168.1.184:8107/v1/models` (de 192.168.1.170) | ✅ 200 |
+| Intranet: chat `POST /v1/chat/completions` (8106) | ✅ finish=stop, resposta correta |
+| Loopback remoto: `http://127.0.0.1:8106/v1/models` | ✅ 200 (conjunto lo intacto) |
+
+### Notas
+- Origem fora de 192.168.1.170 continua **drop** (regra final do conjunto nft, agora incluindo 8106/8107) — fail-closed mantido.
+- Sem chave API (mesma política dos demais endpoints; o firewall é a barreira).
+- `smollm2-1.7b` (8107) só responde enquanto estiver ativo (estático, sob demanda; auto-para em 900 s).
+- Endpoint no `ia` continua `127.0.0.1` (o CLI roda no próprio PC-SALA).
+
+### Reversão
+`sudo nft delete table inet pcsala_api && sudo nft -f /etc/pcsala-bonsai-api.nft.bak-20261111-phi35-smollm2` +
+`sudo ufw delete allow from 192.168.1.170 to any port 8106 proto tcp` (idem 8107) +
+`sed --host 0.0.0.0 → 127.0.0.1` nas duas units.
+
+### Última atualização
+2026-11-11, agente DSH (sessão pc-sala-agent) — API/firewall 8106/8107 liberado.
+
+---
+
+## Atualização Gyro-S (Qwen3.8-Flash-Next) via Strata — 2026-11-11 (22:50 →)
+
+### Objetivo
+Incorporar o modelo `qwen38-gyro-s` (Qwen3.8-Flash-Next Gyro-S TQ1_0, 58,5 GB GGUF + MTP draft 2,6 GB) ao PC-SALA via motor **Strata** (`~/.local/bin/strata`, engine 0.1.55 CUDA12), porta **8081**, GPU Tesla P40, e testar o prompt agentico de VERDITO contra ele.
+
+### Estado atual (22:59)
+- Download local ✅ completo e verificado: `/home/igor/models/qwen38-gyro-s/Qwen3.8-Flash-Next-Gyro-S-TQ1_0.gguf` (58.487.015.808 B, sha256 `c6ea1b08...d9c87` = HF) + `mtp-...-draft.gguf` (2.697.439.648 B).
+- Transfer local→remote (scp -C, ~11,5 MB/s) **EM ANDAMENTO**: PID 195538, log `/tmp/scp2.log`, destino `/mnt/arquivos/models/qwen38-gyro-s/`. 47% (26,3 GB) às 22:59. MTP draft já copiado ✅. Symlink `~/models/qwen38-gyro-s` → `/mnt/arquivos/models/qwen38-gyro-s` ✅.
+- Partial antigo/stale removido de `~/strata-models/qwen38-gyro-s` (22 GB incompleto que o engine rejeitava) ✅.
+- Preparado no remoto: `~/launch-gyro-s.sh` (strata launch --family gyro --model Gyro-S --model-path ... --gpu 0 --port 8081 --context 32k --vision off --mtp on --no-tui --yes) + `/etc/systemd/system/qwen38-gyro-s.service` instalada e daemon-reload ✅. Prompt de teste salvo em `~/agentic-tests/prompt-verdict.txt` + runner `~/agentic-tests/run-verdict.sh` ✅.
+- Entrada `qwen38-gyro-s` em `~/.config/ia/modelos.conf` já existia (porta 8081, unit `qwen38-gyro-s.service`) mas era "fantasma" — agora a unit existe de fato.
+
+### Resultados do prompt VERDITO já coletados (outros modelos)
+maple-pro 8193 ✅ APPROVED (14,8 tok/s) | phi-3.5-mini 8106 ✅ APPROVED (6,1 tok/s) | qwen3-1.7b 8103 ✅ APPROVED (10,1 tok/s) | lfm2.5-1.2b 8104 ✅ APPROVED mas terso (18,1 tok/s) | smollm2-1.7b 8107 ⚠️ PARTIAL (não escolheu um veredito, 14,3 tok/s) | bonsai-27b 8080 ✅ APPROVED melhor qualidade (38,8 tok/s, MTP 224 aceitos).
+
+### Próxima ação
+1. Aguardar scp chegar a 58.487.015.808 B; verificar `sha256sum` no remoto = `c6ea1b08ca312f99095b27588ba35976b53f948268e7f91e7761926aa01d9c87`.
+2. `sudo systemctl start qwen38-gyro-s.service` (ou rodar `~/launch-gyro-s.sh` em background); aguardar porta 8081.
+3. Rodar `~/agentic-tests/run-verdict.sh 8081` e comparar com os resultados acima.
+4. Clock ao vivo durante a transferência: loop em background (PID 205967) gravando em `/tmp/live-clock.log`.
+
+### Notas técnicas
+- Strata rejeita arquivo incompleto: "is short: X of Y bytes... delete it and run setup again".
+- Baixar direto no remoto é inviável (~0,1-1 MB/s no HF); caminho rápido = baixar local com `curl --noproxy '*'` (~5-6 MB/s, proxy local 127.0.0.1:18118 estrangula) e scp local→remote (~11-12 MB/s).
+- GPU no momento: bonsai-27b (8080) usando 12,9 GB; sobra ~10 GB livres na P40 — Gyro-S TQ1_0 precisa de ~8-10 GB VRAM (cabe, mas justo). Se faltar VRAM, parar o bonsai antes.
+
+### Reversão
+`sudo systemctl disable --now qwen38-gyro-s.service && sudo rm /etc/systemd/system/qwen38-gyro-s.service && rm ~/launch-gyro-s.sh`; modelo permanece em `/mnt/arquivos/models/qwen38-gyro-s/`.
+
+---
+
+## Resultado do Teste VERDITO — Gyro-S (porta 8081, Strata, GPU)
+
+| Métrica | Valor |
+|---------|-------|
+| **Modelo** | Qwen3.8-Flash-Next Gyro-S TQ1_0 (58,5 GB) via Strata 0.1.55 CUDA12 |
+| **Hardware** | Tesla P40 (22,3 GB VRAM usado), Xeon E5-2678 v3 |
+| **Tempo total** | 526,1 s |
+| **Tokens completion** | 3.214 |
+| **Throughput** | **6,1 tok/s** |
+| **VRAM** | ~22,3 GB / 23 GB |
+| **VERDITO** | **BLOCKED** |
+
+### Análise do resultado
+O modelo **não emitiu APPROVED/FAIL** — escolheu BLOCKED com justificativa correta: *"Não foi possível cumprir o contrato de veredito porque não há evidência citável concreta de leitura/execução disponível nesta resposta para confirmar a integridade do diretório."*
+
+**Por que BLOCKED:** O contrato exige que o agente use 5 ferramentas (listar_arquivos, ler_arquivo, buscar_texto, executar_comando, escrever_relatorio) e cite evidências concretas (arquivo:linha ou saída de comando). Via endpoint OpenAI `/v1/chat/completions` **não há execução de ferramentas** — o modelo só gera texto. Ele raciocinou corretamente sobre a limitação e se recusou a fabricar evidências (respeitando a regra "NUNCA emita APPROVED sem evidência citável").
+
+### Comparativo com outros modelos (mesmo prompt, mesma API)
+
+| Modelo | Porta | Engine | VERDITO | Tok/s | Qualidade |
+|--------|-------|--------|---------|-------|-----------|
+| **maple-pro** | 8193 | llama.cpp CPU | ✅ **APPROVED** | 14,8 | Excelente — citou evidências, `reasoning_content` visível |
+| **phi-3.5-mini** | 8106 | llama.cpp CPU | ✅ **APPROVED** | 6,1 | Boas citações |
+| **qwen3-1.7b** | 8103 | llama.cpp CPU | ✅ **APPROVED** | 10,1 | Formato correto |
+| **lfm2.5-1.2b** | 8104 | llama.cpp CPU | ✅ **APPROVED** | 18,1 | Terso, sem EVIDENCE detalhado |
+| **smollm2-1.7b** | 8107 | llama.cpp CPU | ⚠️ PARTIAL | 14,3 | Emitiu "APPROVED \| FAIL \| BLOCKED" (não escolheu) |
+| **bonsai-27b** | 8080 | llama.cpp GPU | ✅ **APPROVED** | 38,8 | **Melhor qualidade** — MTP 224/333 aceitos |
+| **gyro-s** | 8081 | **Strata GPU** | 🚫 **BLOCKED** | 6,1 | Recusou-se a fabricar evidências (correto) |
+
+### Observação importante
+Todos os modelos testados via `/v1/chat/completions` **não têm acesso real às ferramentas** — o prompt descreve ferramentas mas a API não as executa. Os modelos que emitiram APPROVED **alucinaram evidências** ou foram mais permissivos. O Gyro-S foi o **único que respeitou estritamente o contrato** e se recusou a inventar citações.
+
+**Conclusão:** Para uso real do contrato VERDITO, é necessário um **loop de ferramentas** (ex: function calling nativo, ou orquestrador externo que execute as ferramentas e devolva resultados ao modelo). O endpoint chat/completions sozinho não cumpre o requisito.
+
+---
+
+## Atualização — Plano Strata P40 + correção do function calling (2026-11-12)
+
+### Objetivo
+Auxiliar na configuração/uso do Strata na P40: calibração, contexto 64K/128K (VRAM+RAM),
+integração com agentes de código (Claude Code/Codex/OpenCode), Memory Writer via MCP e
+validação com testes de memória + código.
+
+### Correção importante (verificada)
+A conclusão anterior de que "a API não executa ferramentas" **não se aplica ao Strata**:
+o servidor Strata tem **function calling nativo** — teste em 8081 retornou
+`finish_reason: "tool_calls"` com `get_weather(city="Sao Paulo")` correto.
+Os testes VERDITO anteriores falharam porque o runner não enviou o campo `tools` no body
+(chat puro); o contrato VERDITO no Strata funciona com `tools` + loop de execução externo
+(o Strata não executa as funções, só gera as chamadas — mesmo padrão OpenAI).
+O Strata também suporta **MCP servers nativos** (config `mcp_servers` / `--mcp-config`),
+executando as tools e devolvendo o resultado ao modelo (requests precisam de `"strata_mcp": true`).
+
+### Descobertas desta sessão (investigação, sem alterações)
+- **Hy-Memory-30B-A3B e Muse Glimmer NÃO existem** no catálogo Strata nem no disco.
+  Catálogo real: gyro (Gyro-S 58 GB ✅), qwen36-35b-a3b (UD-IQ3_XXS/Q3_K_XL/Q4_K_XL ✅),
+  deepseek41 (239–508 GB). O Strata aceita qualquer GGUF próprio via `--model-path`.
+- O Strata **não tem** flags `strata-<model>.json` / `--vram-reserve-mib` /
+  `strata freshness-hook` (nomes do pedido original não correspondem a esta build 0.1.55).
+  Equivalentes reais: run config `~/.local/state/strata/launch/<name>.json`,
+  `--set vram-elastic=1` + `POST /v1/vram`, e hooks `--before-load` / `mcp_servers`.
+- Flags relevantes verificadas no help do engine: `--max-context`, `--kv int8|q4_0|k8v4|fp16`,
+  `--kv-grow` (KV alocado sob demanda → slots de expert crescem), `--kv-resident N`
+  (KV em RAM, libera VRAM p/ expert cache), `--vram-elastic` (segmentos de 512 MiB,
+  liberável via `POST /v1/vram`), `--expert-cache auto|N`, `--expert-cache-per-layer`
+  (70% hit vs 3% no modo shared), `--prefill auto`, `--mtp`, `--spec/--spec-min-p`.
+- Cálculo de fit (código `vram_fit.py`): base Gyro-S 4.720 MiB; KV q4_0 = 576 B/token/layer
+  (13 layers) → 128K ≈ 1.010 MiB. 128K com q4_0+caches ≈ 7,7 GiB VRAM — cabe na P40
+  com ~16 GiB para expert cache.
+- `strata connect` gera configs prontas e verificáveis: claude-code, codex, opencode, omp, pi,
+  hermes, openclaw, deepseek-harness (com `--check` envia 1 prompt + 1 tool call).
+- `strata tune auto <profile> --mode quick --use coding` = tuning de ~20 min que salva preset.
+- `strata bench run --profile <p> --suite standard-v1|serving-smoke|parallel-mixed-v1`.
+- `strata runtime start --profile <p>` = serviço de fundo (alternativa ao systemd).
+
+### Plano proposto (P01–P06) — status
+| Passo | Conteúdo | Estado |
+|---|---|---|
+| P01 | Instalar/calibrar Strata p/ P40 | ✅ instalado; **tuning pendente** (`strata tune auto launch-gyro-s-32k --mode quick --use coding`) |
+| P02 | Contexto maior 64K/128K com KV q4_0 + kv-grow (+ vram-elastic) | PROPOSTO (comandos no plano; não executado — exige parada do Gyro-S) |
+| P03 | Conectar agente de código (Claude Code via túnel SSH 18081→8081; ou `strata connect --write` no remoto) | PROPOSTO |
+| P04 | Memory Writer como MCP server (script `~/memory_writer_mcp.py` + `mcp_config`) | PROPOSTO (rascunho do script no plano) |
+| P05 | Validação: teste escrita de memória (function calling + MCP) e geração de código, com tempos | PARCIAL — chat simples validado (abaixo); testes completos pendentes de autorização |
+| P06 | Serviço systemd persistente (unit `qwen38-gyro-s-64k.service` via `strata serve --profile`) | PROPOSTO (requer autorização para criar unit nova) |
+
+### Executado e verificado nesta sessão
+| Item | Resultado |
+|---|---|
+| Investigação completa do CLI/engine/docs Strata no remoto | concluída (helps, catalog, vram_fit, server.py args, docs) |
+| Teste function calling 8081 (campo `tools`) | ✅ `tool_calls` com `finish_reason: tool_calls`, args JSON válidos |
+| Teste MCP endpoint | ✅ `GET /mcp` → `{"servers": [], "tools": 0}` (sem servers configurados ainda) |
+| Plano 64K/128K via `--plan` (modo seco) | ✅ aceito sem warnings; comandos exatos gerados |
+| Restart do Gyro-S (processo nohup antigo havia morrido; GPU estava livre) | ✅ `~/launch-gyro-s.sh` via nohup (PID 3905→engine 4021), ready em ~450 s, 22,1 GB VRAM |
+| Health check pós-restart | ✅ `/health` ok, context 32768 |
+| Chat simples pós-restart | ✅ "391" (17×23), prompt 20,5 tok/s, decode ~6,9 tok/s, finish=stop, 13,9 s p/ 143 tok |
+
+### Restrições respeitadas
+- Sem alteração em Laguna, builds, modelos.conf, firewall, pcsala-worker/fila task 18.
+- Porta 8081 continua 127.0.0.1. Sem segredos registrados.
+
+### Arquivos alterados
+- `HANDOFF.md` (este registro). Nada no remoto foi modificado (somente leitura + restart
+  do mesmo processo via script existente `~/launch-gyro-s.sh`).
+
+### Operações em andamento
+- Nenhuma (Gyro-S está servindo em 8081; GPU 22,1/23 GB, ~0,7 GB livre).
+
+### Bloqueios/autorizações
+- P02, P06: exigir parada/restart do Gyro-S ou criação de unit nova → aguarda autorização.
+- P05 completo (benchmark + MCP): requer executar `strata tune auto` (~20 min) e testes → aguarda.
+- Modelos Hy-Memory/Muse Glimmer: **não existem** — Igor precisa informar origem real
+  (HF/URL) se quiser testá-los; caso contrário, os modelos MoE disponíveis no catálogo
+  são qwen36-35b-a3b (já instalados) ou deepseek41.
+
+### Próxima ação concreta
+Aguardar decisão do Igor entre: (a) rodar `strata tune auto` (20 min, P01 completo),
+(b) subir Gyro-S 64K com kv q4_0 (P02, com restart), (c) escrever config de agente de
+código (P03) + script MCP do Memory Writer (P04).
+
+### Reversão
+Reverter: `kill` do processo strata (PIDs atuais: control 4004, serve 4007, engine 4021)
+e voltar a `kill`/`strata launch --stop`. Unit antiga `qwen38-gyro-s.service` permanece
+intacta (disabled). `HANDOFF.md` reversível por git.
+
+### Última atualização
+2026-11-12 ~15:20 (America/Sao_Paulo), agente DSH (sessão pc-sala-agent).
+
+---
+
+## Memory Writer — pipeline implementado e testado (2026-11-12 ~13:30)
+
+### Objetivo
+Implementar o "memory writer" (extração de memórias de longo prazo via LLM + MCP),
+seguindo as 4 regras do system prompt: (1) só fatos explícitos, sem inferência;
+(2) frases autossuficientes; (3) sem small talk/ruído; (4) saída só JSON `{"memories": [...]}`.
+
+### Arquivos criados (local: `memory-writer/`)
+- `memory-writer/memory_writer_mcp.py` — servidor MCP stdio (5 tools:
+  `memory_extract_and_store`, `memory_write`, `memory_read`, `memory_search`,
+  `memory_delete`), grava em SQLite (`MEMORY_DB`), chama writer LLM via env
+  (`MEMORY_WRITER_ENDPOINT`/`MEMORY_WRITER_MODEL`). System prompt com as 4 regras.
+- `memory-writer/run_memory_tests.py` — harness que valida as 4 regras contra
+  qualquer endpoint OpenAI-compatible.
+- `memory-writer/README.md` — documentação + resultados.
+- Remoto: `~/memory_writer_mcp.py`, `~/run_memory_tests.py`, `~/strata-mcp-memory.json`
+  (config MCP p/ plugar no Strata via `--set mcp_config=...`).
+
+### Testes executados e verificados (remoto PC-SALA)
+| Writer | Regras 1-4 | Tempo | decode |
+|---|---|---|---|
+| **Gyro-S 8081 (P40)** | ✅✅✅✅ (4/4) | 37 s | 5,4 tok/s |
+| qwen3-1.7b 8103 | 3/4 (rule1 teste esperava pt; conteúdo extraído ok em inglês) | 19,5 s | 15,2 tok/s |
+| lfm2.5-1.2b 8104 | 3/4 (rule3: deixou "cansado"/"segunda-feira" na memória) | 12,7 s | 25,2 tok/s |
+
+- Extração real via MCP (`memory_extract_and_store`): 7 memórias gravadas no
+  SQLite (`/home/igor/.local/share/pc-sala-agent/memory.db`), todas autossuficientes,
+  sem ruído. `memory_read` e `memory_search` verificados (busca "vegetariano" → id 4).
+- Gyro-S emitiu JSON puro, sem fences, 4 memórias no teste padrão.
+
+### Decisões
+- Writer desacoplado do agente de chat: o agente chama a tool MCP; o writer LLM é
+  trocável por env (quando o Hy-Memory-30B-A3B chegar, basta mudar endpoint/modelo).
+- Temperatura 0.6 (consistência); contexto longo do Hy-Memory (262K) permitirá
+  múltiplas sessões de uma vez — Gyro-S atual limitado a 32K.
+- **Hy-Memory-30B-A3B ainda não existe no disco nem no catálogo Strata** — aguardando
+  origem (HF/URL) do Igor.
+
+### Restrições respeitadas
+- Gyro-S não foi reiniciado com MCP (config `~/strata-mcp-memory.json` criada mas não
+  aplicada — precisaria de restart; aguardando autorização). Porta 8081 segue 127.0.0.1.
+- Nada alterado em modelos.conf, firewall, Laguna, worker/fila 18.
+
+### Última atualização
+2026-11-12 ~13:30 (America/Sao_Paulo), agente DSH (sessão pc-sala-agent).
+
+---
+
+## Gyro-S 128K no ar + túnel do agente (2026-11-12 ~14:20)
+
+### Objetivo (decisão do Igor: opção b)
+Subir o Gyro-S com contexto 128K (VRAM+RAM) e validar com prompt real >64k;
+em paralelo, configurar o túnel local→remoto para os agentes de código (opção c).
+
+### Executado e verificado
+| Item | Resultado |
+|---|---|
+| Parado o Gyro-S 32k (`strata launch --stop`) | ✅ VRAM voltou a 13 GB |
+| Novo script `~/launch-gyro-s-128k.sh` | ✅ 128k, kv q4_0, kv-grow=1, expert-cache-per-layer=1, vram-elastic=1, MTP on, preset salvo `gyro-s-128k-p40` |
+| Carga | ✅ ~435 s (validação + load com bonsai2-27b ainda na GPU) |
+| `/health` + `/v1/models` | ✅ `max_context: 131072`, `n_ctx: 131072` |
+| Métricas engine | ✅ kv=q4_0, expert_slots=1632 (vs 1487 no 32k), vram_free=865 MiB, vram_elastic=1, arena=24600 MiB |
+| Chat simples 128K | ✅ "391" (17×23), prompt 18 tok/s, decode 5,7 tok/s |
+| **Prefill 69.673 tokens (57.385 novos)** | ✅ **316,8 tok/s** (181 s); 12.288 tokens reutilizados do conversation cache; decode 6,3 tok/s; raciocínio citou o conteúdo do texto longo corretamente |
+| KV streaming | ✅ 55,95% das leituras de bloco em VRAM / resto em RAM (funcionando como projetado) |
+| Túnel local 18081→8081 (`memory-writer/setup-tunnel.sh start`) | ✅ do local o modelo aparece com n_ctx 131072 (chat de 20 tok truncou no reasoning, comportamento esperado) |
+| Configs de agente prontas (local `memory-writer/`) | ✅ `claude-code-settings.json`, `codex-config.toml`, `opencode-config.json`, `setup-tunnel.sh` (sintaxe validada) |
+
+### Estado atual
+- Gyro-S 128k servindo em 127.0.0.1:8081 (preset `gyro-s-128k-p40`), GPU ~22,4/23 GB (com bonsai2-27b), 865 MiB livres.
+- Túnel SSH rodando no local (PID em `~/.strata-tunnel.pid`).
+- MCP memory-writer: script no remoto (`~/memory_writer_mcp.py`), config `~/strata-mcp-memory.json`
+  criada, **ainda não plugada no Strata** (exigiria restart com `--set mcp_config=...`).
+
+### Notas de desempenho (128K na P40)
+- Prefill quente: ~317 tok/s (muito acima do cold ~16–18 tok/s do primeiro request).
+- Decode: 5,7–6,3 tok/s (mesma faixa do 32k; MTP aceitando ~2/3 dos drafts).
+- 128K cabe com folga: kv q4_0 + kv-grow deixa 865 MiB livres e 1632 slots de expert
+  (mais do que os 1487 do 32k, porque q4_0 gasta metade da VRAM de KV).
+
+### Arquivos alterados
+- Remoto: `~/launch-gyro-s-128k.sh` (novo), preset `gyro-s-128k-p40`,
+  `~/.local/state/strata/launch/gyro-s-128k-p40.json`, `~/strata-mcp-memory.json`.
+- Local: `memory-writer/claude-code-settings.json`, `codex-config.toml`,
+  `opencode-config.json`, `setup-tunnel.sh`.
+
+### Próxima ação concreta
+1. `strata tune auto launch-gyro-s-128k-p40 --mode quick --use coding` (~20 min, opção a — agora que o preset 128k existe).
+2. Plugar o MCP memory-writer (restart com `--set mcp_config=/home/igor/strata-mcp-memory.json`).
+3. Usar um agente (opencode/codex) via túnel para o teste de código real do passo 5.
+
+### Última atualização
+2026-11-12 ~14:20 (America/Sao_Paulo), agente DSH (sessão pc-sala-agent).
+
+---
+
+## Sessão final — tuning + MCP + agente real + migração p/ SSD (2026-11-12 ~17:20)
+
+### Objetivo (decisão do Igor: executar os 3)
+(a) tuning do preset 128k, (b) plugar MCP memory-writer (restart), (c) teste com agente real.
+
+### (a) Tuning — CONCLUÍDO
+- `strata tune auto launch-gyro-s-128k-p40 --mode quick --use coding` (~20 min).
+- Resultado: **"Your current settings are already the fastest we found"** — config atual
+  (kv q4_0 + kv-resident 32768, P40) já é o ótimo medido. Preset salvo: `p40-128k-tuned`
+  (+0% exact), evita retuning em aberturas futuras.
+
+### (b) MCP memory-writer plugado no Strata — CONCLUÍDO
+- `mcp_servers` injetado no config base instalado
+  (`~/.local/share/strata/install/strata-gyro-gyro-s.json`, backup `.pre-ssd`);
+  `derive_config` preserva a chave; `GET /mcp` → `memory-writer: ready`, 5 tools
+  (`memory-writer__memory_extract_and_store`, `..._write`, `..._read`, `..._search`, `..._delete`).
+- Tool call via request com `"strata_mcp": true` → o server executa a tool server-side
+  e devolve o resultado ao modelo (memória id 9 gravada, confirmada no SQLite).
+- MCP server matável sem parar o modelo: Strata re-inicia o child na próxima chamada.
+
+### (c) Agente real (opencode) — CONCLUÍDO ✅
+- Config isolada de projeto `agent-test/.opencode/opencode.jsonc` (sem tocar na config
+  global do usuário, que usa `opencode.jsonc` com kilo-gateway):
+  provider `strata` (túnel 18081→8081) + provider `strata-cpu` (túnel 18103→8103,
+  para `small_model` — evita 2 requests concorrentes na GPU).
+- Tarefa de 3 etapas executada pelo opencode (v2.2.6):
+  1. `memory_extract_and_store` (MCP) → 3 memórias gravadas no SQLite local, 4/4 regras;
+  2. `handoff_utils.py` criado (função `next_action()`, 15 linhas, testada pelo agente);
+  3. `memory_read` → agente reportou as memórias em tabela.
+- `validate_agent.py` (requisito #4): **GERAÇÃO DE CÓDIGO ✅** 54,8–69,9 s
+  (sliding_window_median, dois heaps, no-think) e **ESCRITA DE MEMÓRIA ✅** 10,4–13,1 s
+  (4–5 memórias, JSON puro, zero ruído).
+
+### DIAGNÓSTICO + MIGRAÇÃO P/ SSD (autorizada pelo Igor)
+- **Problema:** `--ple-io direct` (default) estagnava o engine 60 s no HDD
+  (/mnt/arquivos, sdb): 16 threads em state D lendo a tabela PLE de 28,8 GB
+  (320M linhas) com page cache frio → stall guard parava o engine (issue #29) e
+  o server reiniciava (~7 min). `--ple-io mmap` removeu o stall de disco
+  (0 threads em D), mas stall residual persistiu com 2 requests concorrentes.
+- **Solução:** GGUF (58,5 GB) + packs (1,5 GB) + mtp/rt (0,8 GB) copiados para
+  `/home/igor/models-ssd/` (sda3, SSD, 120 GB livres antes). **SHA256 verificado**
+  (c6ea1b08…d9c87, confere com o hash original). Original intacto em /mnt/arquivos.
+- Config base + `~/launch-gyro-s-128k.sh` apontam para o SSD, `--ple-io direct`
+  (correto p/ SSD). Backups: `strata-gyro-gyro-s.json.pre-ssd` e `.bak-1794506026`.
+- **Depois do SSD: nenhum stall**; warmup 4,7–5,5 s; prefill 120+ tok/s (cache) /
+  316,8 tok/s (70k novos); decode no-think 17–23 tok/s (vs ~6 com thinking).
+
+### Prompt do writer reforçado (aprendizado)
+- Modelo pequeno invertia persona (respondia a conversa em vez de extrair) com
+  temp 0,6. Correção: conversa entre delimitadores `<<<...>>>` + instrução final
+  ("You are NOT the assistant in it - do not answer it. Output ONLY the JSON")
+  + temperatura 0,3 (padrão do script; env `MEMORY_WRITER_TEMPERATURE` sobrescreve).
+- `thinking_budget_tokens: 0` desativa o raciocínio no Strata (modo no-think,
+  recomendado p/ extração e geração de código — 3–4x mais rápido no decode).
+
+### Estado final
+| Item | Estado |
+|---|---|
+| Gyro-S 128K | ✅ rodando, modelo no SSD, `--ple-io direct`, MCP plugado, preset `p40-128k-tuned` |
+| Túneis locais | 18081→8081 (GPU), 18103→8103 (CPU small_model); PIDs em `~/.strata-tunnel*.pid` |
+| Memórias | 9 no SQLite remoto (`~/.local/share/pc-sala-agent/memory.db`); 3 no SQLite local (`memory-writer/memory.db`) |
+| Agentes | opencode testado e funcional (config de projeto em `agent-test/.opencode/`) |
+| Hy-Memory-30B-A3B | ainda não existe no disco — trocar writer por env quando chegar |
+
+### Arquivos desta sessão (local `memory-writer/`)
+`memory_writer_mcp.py` (prompt reforçado), `validate_agent.py`, `run_memory_tests.py`,
+`opencode-test-config.json`, `agent-test/.opencode/opencode.jsonc`, `agent-test/handoff_utils.py`
+(gera pelo agente), `agent-test/opencode-agent-test.log` (evidência do teste).
+
+### Reversão
+- Voltar p/ /mnt/arquivos: `strata launch --stop --preset gyro-s-128k-p40`; restaurar
+  `strata-gyro-gyro-s.json.pre-ssd`; reverter `~/launch-gyro-s-128k.sh` (sed para o
+  caminho antigo). Desligar túneis: `kill $(cat ~/.strata-tunnel.pid) $(cat ~/.strata-tunnel-cpu.pid)`.
+- O arquivo em /mnt/arquivos nunca foi alterado.
+
+### Última atualização
+2026-11-12 ~17:20 (America/Sao_Paulo), agente DSH (sessão pc-sala-agent).
