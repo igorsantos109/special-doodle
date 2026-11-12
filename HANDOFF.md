@@ -801,3 +801,72 @@ em paralelo, configurar o túnel local→remoto para os agentes de código (opç
 
 ### Última atualização
 2026-11-12 ~17:20 (America/Sao_Paulo), agente DSH (sessão pc-sala-agent).
+
+---
+
+## Sessão Hy-Memory-30B-A3B — teste no motor Strata (2026-11-12 ~23:50)
+
+### Objetivo
+Testar o writer Hy-Memory-30B-A3B (MoE ~3B ativos, Q4_K_M) no motor Strata existente.
+
+### Descoberta principal — incompatibilidade com o engine Strata
+- **O engine Strata 0.1.55 NÃO roda o Hy-Memory.** `strings` no binário mostra que os
+  únicos `check_architecture_*` compilados são `qwen35moe` (Qwen3.8-Flash-Next) e
+  `qwen4exp` (Qwen3.6-35B-A3B). Zero ocorrência de "hunyuan"/"hy" no binário.
+- O arquivo GGUF tem `general.architecture = hy_v3` (Hunyuan v3). O próprio Strata
+  (`strata_control.models.plan_import`) responde:
+  `unsupported_architecture` / "this model type is not supported by the Strata engine
+  (add it as a Custom model API with llama-server instead)".
+- Conclusão: **não existe modo `--model-path` no Strata para esta arquitetura.**
+  O caminho suportado é o que o próprio Strata sugere: rodar o modelo com llama-server
+  e plugá-lo como API custom (endpoint OpenAI) — é exatamente o que o memory-writer
+  MCP já faz via `MEMORY_WRITER_ENDPOINT`.
+
+### O que foi executado (verificado)
+1. Baixei `tencent/Hy-Memory-30B-A3B-GGUF` Q4_K_M (18.2 GB) do Hugging Face,
+   **sha256 verificado** (`e417fc86d0a2bb058ed253028f4617d144aa874b8af35711cca0c7009bd63446`),
+   copiado p/ `/home/igor/models-ssd/hy-memory-30b-a3b/` (remoto).
+2. Tentei `strata launch --model-path` → recusa (arquitetura).
+3. Subi o modelo com **llama.cpp** (build CUDA oficial, `/home/igor/opt/llama.cpp`),
+   porta 8095, como endpoint OpenAI — o fallback recomendado pelo Strata.
+4. GPU 0 (P40) estava 100% ocupada (22319/23040 MiB: Strata 9174 + bonsai 12782 +
+   maple 304). `-ngl 99/6/2/1` → `cudaMalloc failed: out of memory` em todos.
+   **Só funcionou `-ngl 0` (100% CPU).**
+5. Rodei os 4 testes de memory-writer + código contra o 8095.
+
+### Resultados (medidos, CPU-only, 20 threads)
+| Teste | Tempo | Resultado |
+|---|---|---|
+| Básico ("9x9") | 50 s | ✅ 81 |
+| Extração 4 regras (prompt padrão) | 5m16s | 4/4, porém com ruído ("tired", "tomorrow is Monday") |
+| Extração 4 regras (prompt estrito, temp 0) | 4m08s | ✅ 4/4, sem ruído, JSON limpo |
+| Geração de código (validate_agent) | — | ❌ timeout >600 s |
+
+- Throughput: prefill ~3.2 tok/s, **decode ~0.27 tok/s** (CPU-only). Um único request
+  de memória leva ~4–5 min; o writer atual (Gyro-S via Strata, GPU) leva ~10 s.
+- **Geração de código não é viável neste hardware em CPU**: 1600 tokens a 0.27 tok/s
+  ≈ 1 h. Timeout de 600 s estourou.
+- **Qualidade do JSON**: o modelo segue bem as 4 regras quando o prompt é estrito
+  (exclusão explícita de emoção transitória + temp 0). Com prompt frouxo vaza ruído.
+
+### Decisão / recomendação
+- **Não plugar o Hy-Memory no Strata** (impossível — arquitetura não suportada).
+- **Usar como writer é viável só via llama-server + API custom**, mas em 4–5 min por
+  extração em CPU-only é ~25–30× mais lento que o Gyro-S atual (10 s). Só vale a pena
+  se houver GPU livre (a P40 está saturada) ou uma máquina com GPU dedicada.
+- O writer atual (Gyro-S 128K no Strata, GPU, ~10 s, 4/4 regras) continua o mais
+  adequado para o pipeline memory-writer desta máquina.
+
+### Arquivos / estado
+- Remoto: `/home/igor/models-ssd/hy-memory-30b-a3b/Hy-Memory-30B-A3B-Q4_K_M.gguf`
+  (sha256 verificado); `~/launch-hymemory-llama.sh` (llama-server, `-ngl 0`, port 8095).
+- Servidor de teste ENCERRADO; porta 8095 livre; túnel local 18095 removido.
+- Local: `~/Downloads/hy-memory/Hy-Memory-30B-A3B-Q4_K_M.gguf` + `download.log`.
+- GPU e RAM voltaram ao estado anterior (load 0.26; GPU 22319 MiB = só os 3 processos originais).
+
+### Reversão
+- Apagar o GGUF: `rm -rf /home/igor/models-ssd/hy-memory-30b-a3b` (remoto) e
+  `~/Downloads/hy-memory` (local). Nenhuma config do Strata foi alterada nesta sessão.
+
+### Última atualização
+2026-11-12 ~23:50 (America/Sao_Paulo), agente DSH (sessão pc-sala-agent).
