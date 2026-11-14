@@ -4,7 +4,7 @@
 # Verificar se ja existe /etc/systemd/system/laguna.service antes de copiar.
 #
 # ACTIVACAO (quando o GGUF existir):
-#   sudo cp configs/laguna.service /etc/systemd/system/
+#   sudo cp deploy/systemd/laguna.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now laguna.service
 #

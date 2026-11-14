@@ -17,7 +17,7 @@ mkdir -p ~/models/bonsai-2-4b
 hf download prism-ml/Ternary-Bonsai-2-4B-gguf \
   Ternary-Bonsai-2-4B-PQ2_0-MTP-Q8_0.gguf --local-dir ~/models/bonsai-2-4b
 sha256sum ~/models/bonsai-2-4b/*.gguf
-sudo cp bonsai2-4b-gpu.service /etc/systemd/system/
+sudo cp deploy/systemd/bonsai2-4b-gpu.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl start bonsai2-4b-gpu.service
 ```
