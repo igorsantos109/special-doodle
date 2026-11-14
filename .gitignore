@@ -21,6 +21,10 @@ __pycache__/
 # Dependencias fixadas devem permanecer versionadas
 !requirements.lock
 
+# Backups manuais (o Git ja eh o backup)
+*.bak
+*.orig
+
 # Credenciais locais
 .env
 .env.*

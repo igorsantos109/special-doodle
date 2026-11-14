@@ -5,7 +5,7 @@
 # Contexto 128K confirmado funcional (VRAM ~20 GB).
 #
 # ATIVACAO:
-#   sudo cp configs/laguna-gpu.service /etc/systemd/system/
+#   sudo cp deploy/systemd/laguna-gpu.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now laguna-gpu.service
 #

@@ -27,7 +27,7 @@
 #   por isso os hosts gcc-13/g++-13.
 #
 # ATIVACAO:
-#   sudo cp nemotron.service /etc/systemd/system/
+#   sudo cp deploy/systemd/nemotron.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now nemotron.service
 #
