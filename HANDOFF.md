@@ -999,3 +999,35 @@ Excluir units: `sudo rm /etc/systemd/system/{ttf-qwen38-27b,qwen38-gyro-s}.servi
 
 ### Última atualização
 2026-11-14 ~03:45 (America/Sao_Paulo), agente DSH (sessão pc-sala-agent, incorporação gyro-s + TTF).
+
+---
+
+# Configuração DSH (DeepSeek Harness) — Novos provedores
+
+## Modelo adicionado em `~/.dsh/profiles/web/cordis.patch.yml`
+
+### 1. ttf-qwen38 (linha ~449)
+- **Porta**: `http://192.168.1.184:8108/v1`
+- **API key env**: `PCSALA_LOCAL_API_KEY` (= `pcsala-open-no-auth`)
+- **Modelo ID**: `ttf-qwen3.8-27b-gpu`
+- **Contexto**: 65536 tokens, maxTokens: 2048
+- **Reasoning**: off
+- **Engine**: ttf-home patched llama.cpp CUDA (Q1 ternary)
+
+### 2. gyro-s (linha ~468)
+- **Porta**: `http://192.168.1.184:8081/v1`
+- **API key env**: `DSH_LOCAL_API_KEY` (= `sk-strata-zhmxMe6u9RcjJmmI4ykiZ2meu7L5-H2J`, adicionado ao `~/.dsh/.env`)
+- **Modelo ID**: `gyro-s-qwen38-flash`
+- **Contexto**: 32768 tokens, maxTokens: 2048
+- **Reasoning**: auto (com reasoningEfforts: low/medium/high/max)
+- **Engine**: Strata Terminal v0.1.55 com MTP + Expert Cache
+
+## Arquivos alterados para DSH
+- `~/.dsh/profiles/web/cordis.patch.yml` — inserção de `ttf-qwen38` e `gyro-s` na seção `llm-pi-ai`
+- `~/.dsh/.env` — adição de `DSH_LOCAL_API_KEY` com chave do Gyro-S
+
+## Reinício necessário
+Reiniciar a GUI DSH (`pnpm run dev:web` ou recarregar a aba) para o Cordis patch ser readicionado e os novos provedores aparecerem no seletor de modelos.
+
+### Última atualização
+2026-11-14 ~03:50 (America/Sao_Paulo), agente DSH (configuração DSH dos dois provedores).
