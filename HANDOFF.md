@@ -44,17 +44,17 @@ Gerenciar LLMs locais no PC-SALA (192.168.1.184): Tesla P40 (23 GB VRAM) + CPU (
 | Item | Estado |
 |------|--------|
 | Branch | `fase-0` |
-| Commits não enviados | 4 (`git push origin fase-0`) |
+| Commits não enviados | 5 (repos GitHub **arquivados/read-only** — push falha com 403) |
 | Working tree | Limpo |
-| Remotes | `origin` (ialocalagent), `pc-sala-agent`, `special-doodle` |
+| Remotes | `origin` (ialocalagent), `pc-sala-agent`, `special-doodle` — todos read-only |
 
 ---
 
 ## Próxima Ação Concreta
 
 ```bash
-# 1. Push commits pendentes
-cd /home/igor/ia-sh/pc-sala-agent && git push origin fase-0
+# 1. Push BLOQUEADO — repos GitHub arquivados (read-only)
+#    Alternativa: criar novo repo ou desarquivar no GitHub
 
 # 2. Validar no pc-sala via SSH
 ssh igor@192.168.1.184 '~/.local/bin/ia list'
@@ -71,7 +71,7 @@ ssh igor@192.168.1.184 'ia solo qwen38-gyro-s'
 
 | Item | Status |
 |------|--------|
-| Push `origin/fase-0` | **PENDENTE** |
+| Push `origin/fase-0` | **BLOQUEADO** — repos GitHub arquivados (403 read-only) |
 | Teste real TTF (chat/code/math) | Pendente |
 | Gyro-S 128k + MCP memory-writer | Precisa restart Strata com `--set mcp_config=...` |
 | Hy-Memory-30B-A3B | Não suportado no Strata (arquitetura `hy_v3`) |
