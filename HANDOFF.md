@@ -868,5 +868,134 @@ Testar o writer Hy-Memory-30B-A3B (MoE ~3B ativos, Q4_K_M) no motor Strata exist
 - Apagar o GGUF: `rm -rf /home/igor/models-ssd/hy-memory-30b-a3b` (remoto) e
   `~/Downloads/hy-memory` (local). Nenhuma config do Strata foi alterada nesta sessão.
 
+---
+
+# TTF Qwen3.8-27B — GPU Tesla P40
+
+## Objetivo
+Integrar o modelo TTF Qwen3.8-27B (quantização ternária 1.58-bit) na Tesla P40 do PC-SALA, com suporte a contextos de até 65k tokens.
+
+## Modelo
+- **Arquivo**: `ttf-Qwen3.8-27B-adapters-r0.2-TQ1_P.gguf` (8.20 GB)
+- **SHA256**: `b9b6baa3789874b956309dc0df6f44de6e924c2f686473c3cff87839c79273a3`
+- **Engine**: ttf-home patched llama.cpp (`--q38`) → `/home/igor/.cache/ttf/llama.cpp-q38/build-cuda/bin/llama-server`
+- **Local**: `~/models/ttf-qwen38-27b/ttf-Qwen3.8-27B-adapters-r0.2-TQ1_P.gguf`
+- **Remoto**: mesmo caminho em `/home/igor/models/`
+- **Porta**: 8108
+- **Class**: GPU, grupo exclusivo: `gpu-slot-1`
+- **Alias no modelos.conf**: `ttf-qwen38` (entrada nº 24)
+
+## Estado atual
+- ✅ Modelo baixado e sha256 verificado
+- ✅ Engine ttf-home construído com patches CUDA/Pascal (compute 6.1)
+- ✅ GGUF copiado para remoto + SHA256 confirmado
+- ✅ Unit systemd criada: `ttf-qwen38-27b.service`
+- ✅ Entrada registrada em `~/.config/ia/modelos.conf`
+- ✅ Bonsai-27b parado para liberar gpu-slot-1 (VRAM livre: ~22.6 GB)
+- ✅ Modelo carregado e rodando em produção
+
+## Resultados de benchmark
+
+### Benchmark padrão (llama-bench pp512/tg128)
+```
+| model              | size     | prefill   | decode    |
+|--------------------|----------|-----------|-----------|
+| qwen3.8 27B TQ1_0  | 7.63 GiB | 99.87±0.27t/s | 5.91±0.00t/s |
+```
+
+### Testes de contexto (via API /v1/chat/completions)
+- `ctx=30k`: total=212s, prompt_tok=30009, prefill≈62.2 t/s, decode≈1.7 t/s, cached=29493
+- `ctx=47k`: total=270s, prompt_tok=47009, prefill≈65.3 t/s, decode≈1.3 t/s, cached=29493
+- `ctx=65k`: total=322s, prompt_tok=65009, prefill≈57.9 t/s, decode≈1.0 t/s, cached=46493
+- VRAM pós-testes: 8375 MiB (~8.2 GB total da P40)
+
+**Nota**: Os tempos totais incluem toda a etapa de prefill. O modelo funciona nos 3 contextos sem erro.
+O cache kv reutiliza tokens já processados (cached_tokens indica tokens em cache).
+
+### Decodificação rápida (max_tokens=3)
+- Decode rate cai significativamente acima de 30k: de ~1.7 t/s → ~1.0 t/s em 65k
+- Prefill rate: estável entre 58-65 t/s nos grandes contextos
+
+## Configuração server
+```
+llama-server \
+  -m /home/igor/models/ttf-qwen38-27b/ttf-Qwen3.8-27B-adapters-r0.2-TQ1_P.gguf \
+  --host 127.0.0.1 --port 8108 \
+  -c 65536 -t 8 -ngl 99 \
+  --no-kv-offload -n 2048 --parallel 1 --no-jinja --threads-http 4
+```
+
+## Observações técnicas
+- **CUDA Pascal**: compute cap 6.1. O build `prism-pascal-build` ou `ttf-home --q38` são necessários (mainline llama.cpp não carrega TQ1_P).
+- **VRAM**: modelo consome ~7.7 GB fixo + KV cache proporcional ao contexto. A 65k tokens, ainda cabe (< 8.5 GB).
+- **Cached prefill**: ttf-home usa LCP similarity para reusar KV cache existente (~50% reutilização em tests).
+- **Adapters-r0.2**: versão com low-rank ternary adapters (rank 0.2). Mais qualidade que a versão noadapters.
+
+## Próximos passos
+- Testes gerativos reais com prompts úteis (chat, code, math) para avaliar qualidade real
+- Monitoramento de VRAM durante uso prolongado
+- Possível ajuste de `-c` se necessário otimizar KV cache
+- Integração com ia agent via CLI (`ia status ttf-qwen38`, `ia health ttf-qwen38`)
+
+### Decisões e justificativas
+- **Alternância obrigatória**: P40 tem 23 GB; TTF usa ~7.7 GB, Gyro-S usa ~21+ GB. Juntos = ~29 GB > 23 GB. Use `ia solo <modelo>` para alternar entre eles.
+- **Gyro-S SSD**: Modelo movido `/mnt/arquivos/` → `~/models/qwen38-gyro-s/` para evitar PLE-io lento do HDD (sdb rotacional).
+- **Acesso LAN**: Ambas serviços expostos em `0.0.0.0`; regras ufw para 192.168.1.170 liberam portas 8081 e 8108.
+
+## Gyro-S — Qwen3.8-Flash-Next Gyro-TQ1_0
+
+### Modelo
+- **Arquivo**: `Qwen3.8-Flash-Next-Gyro-S-TQ1_0.gguf` (55 GB)
+- **Engine**: Strata Terminal v0.1.55 (cuda) com MTP + Expert Cache
+- **Local**: `~/models/qwen38-gyro-s/Qwen3.8-Flash-Next-Gyro-S-TQ1_0.gguf` (SSD sda3)
+- **Porta**: 8081
+- **Class**: GPU, grupo exclusivo: `gpu-slot-1`
+- **Alias no modelos.conf**: `qwen38-gyro-s`
+- **API key**: `sk-strata-zhmxMe6u9RcjJmmI4ykiZ2meu7L5-H2J` (gerada automaticamente)
+- **Contexto**: 32k max, kv int8
+- **MTP**: draft layer 106299 tokens (~213 MiB)
+- **Expert cache**: auto ~6.5 GiB VRAM
+
+### Configuração
+```bash
+# launch-gyro-s.sh
+strata launch --family gyro --model Gyro-S \
+    --model-path ~/models/qwen38-gyro-s/Qwen3.8-Flash-Next-Gyro-S-TQ1_0.gguf \
+    --gpu 0 --port 8081 --access lan \
+    --context 32k --vision off --mtp on --tune skip \
+    --no-tui --yes
+```
+
+### Benchmark (testado com sucesso)
+- Preload time: ~360s (first start), reuses config after
+- Prefill: ~32 tok/s (PP53)
+- Decode: ~6.2 tok/s (TG20)
+- Expert cache hit rate: ~87%
+- Draft acceptance: 7/16 (~44%)
+
+### Endpoints
+- Local: `http://127.0.0.1:8081/v1/chat/completions` (Bearer auth)
+- LAN: `http://192.168.1.184:8081/v1/chat/completions` (via ufw regra)
+
+### Status de instalação
+- ✅ GGUF copiado para SSD `~/models/qwen38-gyro-s/`
+- ✅ Config strata atualizado (`gyro-s-32k.json`) apontando ao SSD
+- ✅ Launcher atualizado (`launch-gyro-s.sh` com `--access lan`)
+- ✅ Unit systemd `qwen38-gyro-s.service` habilitada (Restart=always)
+- ✅ API testada e respondendo com chave Bearer
+- ⚠️ Primeiro carregamento leva ~360s (primeiro boot ou após reboot)
+- ⚠️ Não pode rodar simultâneo com TTF no mesmo GPU
+
+## Reversão de ambos os modelos (TTF + Gyro-S)
+Parar: `sudo systemctl stop ttf-qwen38-27b qwen38-gyro-s`
+Desativar boot: `sudo systemctl disable ttf-qwen38-27b qwen38-gyro-s`
+Remover config: editar manualmente `~/.config/ia/modelos.conf`
+Excluir units: `sudo rm /etc/systemd/system/{ttf-qwen38-27b,qwen38-gyro-s}.service && sudo systemctl daemon-reload`
+
+### Próxima ação concreta
+- Ogyro está configurado mas precisa rodar sozinho na P40 (VRAM total). Use `ia solo qwen38-gyro-s` quando precisar dele.
+- TTF está pronto para contextos grandes (>30k tokens).
+- Considerar mover Gyro-S para outro GPU (se disponível) para permitir uso simultâneo.
+
 ### Última atualização
-2026-11-12 ~23:50 (America/Sao_Paulo), agente DSH (sessão pc-sala-agent).
+2026-11-14 ~03:45 (America/Sao_Paulo), agente DSH (sessão pc-sala-agent, incorporação gyro-s + TTF).
