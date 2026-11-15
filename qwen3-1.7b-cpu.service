@@ -1,0 +1,58 @@
+# qwen3-1.7b-cpu.service — Validador de tool calls da camada CPU agentica
+#
+# PAPEL: 1.º portao das tool calls geradas pelo modelo GPU (perfil
+#   `cpu-agent-v1` em src/pcsala_agent/inference_profiles.py). Recebe a
+#   intencao (ferramenta + argumentos) e devolve APENAS JSON
+#   {"accept","confidence","reason"}; rejeicao ou baixa confianca envia a
+#   mesma intencao para o fallback (lfm2.5-1.2b-cpu.service, 8104). Nada e
+#   executado por aqui — ver cpu_agent.validate_tool_call().
+# CLASSE: CPU, `-ngl 0` (zero VRAM, nao disputa o gpu-slot-1 nem a P40).
+# Porta 8103: as sugeridas no plano (8094/8095) estao TOMADAS — 8094 e do
+#   flint.service (GPU) e 8095 esta reservado ao Strata; 8101/8102 do
+#   flint-ternary/fusion4. 8103+ estao livres e fora do nft/ufw (loopback).
+# Engine: PrismML llama.cpp (build CPU 73bfe6c) — o mesmo binario das units
+#   CPU da casa (bonsai2-cpu). O `ik_llama.cpp` citado no plano NAO esta
+#   instalado nesta maquina; para Q4_K_M + qwen3 o build local cobre.
+# `--reasoning off --reasoning-format none`: o veredito tem de sair como JSON
+#   limpo; sem isto o Qwen3 gasta o budget em  e o parser falha.
+# Pesos: ~/models/qwen3-1.7b-cpu -> /mnt/arquivos/models/qwen3-1.7b-cpu (sdb1).
+# Leve e residente: 1,1 GB de pesos, ~1,3 GB RSS, sobe no boot (enable).
+
+[Unit]
+Description=Qwen3-1.7B Q4_K_M CPU — validador de tool calls (porta 8103)
+Wants=network-online.target
+After=network-online.target local-fs.target
+RequiresMountsFor=/mnt/arquivos
+
+[Service]
+Type=exec
+User=igor
+Group=igor
+WorkingDirectory=/home/igor
+ExecStart=/home/igor/opt/prism-cpu-install-aswyUW/install/bin/llama-server \
+    -m /home/igor/models/qwen3-1.7b-cpu/Qwen3-1.7B-Q4_K_M.gguf \
+    --host 127.0.0.1 \
+    --port 8103 \
+    -c 8192 \
+    --threads 12 \
+    -ngl 0 \
+    --no-kv-offload \
+    -n 512 \
+    --parallel 1 \
+    --jinja \
+    --reasoning off \
+    --reasoning-format none \
+    --cache-reuse 256 \
+    --threads-http 4
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillMode=control-group
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

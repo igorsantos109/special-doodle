@@ -1,0 +1,109 @@
+# fusion4.service — PXA-Fusion4-35B (poisonxa, MoE PXQ4 "super-agentic") na Tesla P40
+#
+# Modelo: poisonxa/PXA-Fusion4-35B-GGUF : PXA-Fusion4-35B-PXQ4.gguf
+#   19 296 360 576 B (17,97 GiB), sha256 6fc30e1f9d3df634...  (verificado na subida)
+#   753 tensores: 120 x PXQ4 (id GGML 252) + 300 mxfp4 + 308 f32 + 23 q5_0 + 2 f16
+#   arch `qwen35moe` (Qwen3.5-35B-A3B: 256 experts x 40 camadas, atencao hibrida),
+#   ctx_train 262 144, cabeca MTP embutida (inerte sem --spec-type),
+#   template 8 196 chars com tools + thinking.
+#
+# ENGINE: PXA v4.0 (github.com/poisonxa16/pxa, commit 0a369a5), build
+#   /home/igor/opt/pxa/build configurado com -DGGML_CUDA=ON
+#   -DCMAKE_CUDA_ARCHITECTURES=61 (P40/sm_61 — a PXA da "16 GB-class settings"
+#   ao sm_61 e nao mediu a P40; por isso isto e uma medicao propria).
+#   Source build = PXQ classico + quants standard (PXQN exige a lib fechada;
+#   o Fusion4 PXQ4 e PXQ classico, logo funciona).
+#   So esta engine le PXQ4: o id 252 nao existe no llama.cpp upstream nem no
+#   fork PrismML.
+#
+# --jinja OBRIGATORIO + --reasoning off: o README do modelo marca as duas como
+#   "required, not optional" (sem template correcto o modelo entra num
+#   <think> aberto e nunca faz tool call). Verificar com /apply-template.
+#
+# PORTA 8102 — 8085 ja pertence a clover-35b na frota.
+#   Pesos em /dev/sdb1 (ext4) via symlink ~/models/pxa-fusion4-35b.
+#
+# VRAM medida (08/11/2026, P40 23 040 MiB, -c 32768):
+#   tensores 17,96 GiB (4,345 BPW) + KV 402,82 MiB + compute CUDA 489,01 MiB
+#   = 19 371 MiB usados, 3 533 livres (guarda de 1,5 GB do switch OK).
+#   KV = 12,6 KiB/token (atencao hibrida, kv_heads=2) => -c 100000 custa
+#   ~1 229 MiB de KV e deixa ~2 800 MiB de folga: a unit arranca a 100 000.
+#   Medicao completa em docs/expansao-gpu-2026-11.md.
+#
+# amostragem receitada pelo fabricante para uso agentico:
+#   --temp 0.7 --top-p 0.8 --top-k 20 --min-p 0 --presence-penalty 1.5
+#   --repeat-penalty 1.15 --repeat-last-n 256 --dry-multiplier 0.8 -n 2048
+#
+# ATIVACAO:
+#   sudo cp fusion4.service /etc/systemd/system/ && sudo chmod 0644 /etc/systemd/system/fusion4.service
+#   sudo systemctl daemon-reload
+#   ./pcsala models switch fusion4-35b            # ou: ia solo fusion4
+#
+# REVERSAO:
+#   sudo systemctl disable --now fusion4.service
+#   sudo rm /etc/systemd/system/fusion4.service && sudo systemctl daemon-reload
+
+[Unit]
+# Um -c acima do que cabe nao falha rapido: cada tentativa leva ~90 s a ler 18 GB
+# da sdb1 antes do cudaMalloc dizer nao. Sem teto, o Restart=on-failure republica
+# a tentativa indefinidamente (visto a 08/11 com -c 65536).
+StartLimitIntervalSec=900
+StartLimitBurst=2
+Description=PXA-Fusion4-35B PXQ4 GPU (porta 8102)
+Wants=network-online.target
+After=network-online.target
+Conflicts=bonsai2-27b.service laguna-gpu.service ornith.service qwen3-coder.service \
+          clover-35b.service tiel-coder.service flint.service qwen36-q3.service \
+          qwen36-q4.service devstral.service potato-coder.service glm47-flash.service
+
+# Um -c acima do que cabe nao falha rapido: cada tentativa_le ~90 s a ler 18 GB
+# da sdb1 antes do cudaMalloc dizer nao. Sem teto, o Restart=on-failure republica
+# a tentativa indefinidamente (visto a 08/11 com -c 65536).
+StartLimitIntervalSec=900
+StartLimitBurst=2
+
+[Service]
+Type=exec
+User=igor
+Group=igor
+WorkingDirectory=/home/igor
+Environment=PXA_ENHANCE=1
+ExecStart=/home/igor/opt/pxa/build/bin/llama-server \
+    -m /home/igor/models/pxa-fusion4-35b/PXA-Fusion4-35B-PXQ4.gguf \
+    --alias pxa-fusion4-35b-gpu \
+    --host 0.0.0.0 \
+    --port 8102 \
+    -c 32768 \
+    -t 8 \
+    -ngl 99 \
+    -sm layer \
+    -fa off \
+    --cache-type-k q8_0 \
+    --cache-type-v f16 \
+    -b 2048 \
+    -ub 1024 \
+    -n 2048 \
+    --parallel 1 \
+    --jinja \
+    --reasoning off \
+    --temp 0.7 \
+    --top-p 0.8 \
+    --top-k 20 \
+    --min-p 0 \
+    --presence-penalty 1.5 \
+    --repeat-penalty 1.15 \
+    --repeat-last-n 256 \
+    --threads-http 4
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=1800s
+TimeoutStopSec=60s
+KillMode=control-group
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

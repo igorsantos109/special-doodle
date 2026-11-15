@@ -1,0 +1,12 @@
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 14ecc84d6..ddd85dcfb 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -2173,6 +2173,7 @@ void llama_model_base::load_hparams_hadamard(llama_model_loader & ml) {
+             case LLM_ARCH_QWEN3NEXT:
+             case LLM_ARCH_DSPARK:
+             case LLM_ARCH_GEMMA4:
++            case LLM_ARCH_FLINT:  // flint: hadamard block 512 nos ffn_*_exps (build_lora_mm_id)
+                 break;
+             default:
+                 throw std::runtime_error(format(

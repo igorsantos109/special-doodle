@@ -1,0 +1,53 @@
+# lfm2.5-1.2b-cpu.service — Fallback ultrarrapido da camada CPU agentica
+#
+# PAPEL: 2.º portao. Recebe a mesma intencao de tool call que o validador
+#   (qwen3-1.7b-cpu.service, 8103) rejeitou ou que nao respondeu em baixo.
+#   Híbrido state-space (LFM2.5-1.2B-Instruct): decode muito acima do Qwen3
+#   1.7B no mesmo hardware, por isso e a rota de reavaliacao barata.
+# CLASSE: CPU, `-ngl 0` (zero VRAM; nao entra no gpu-slot-1).
+# Porta 8104 (8095 do plano esta reservado ao Strata; 8101/8102 do
+#   flint-ternary/fusion4; 8094 do flint GPU).
+# Engine: PrismML llama.cpp CPU (build 73bfe6c) — unico binario local com
+#   arquitectura `lfm2` na variante CPU (tambem existe em llama-cuda-official
+#   e millie-runtime). Verificado: strings do binario contem `lfm2`.
+# Pesos: ~/models/lfm2.5-1.2b-cpu -> /mnt/arquivos/models/lfm2.5-1.2b-cpu (sdb1).
+# Leve e residente: 0,7 GB de pesos, ~0,9 GB RSS, sobe no boot (enable).
+
+[Unit]
+Description=LFM2.5-1.2B-Instruct Q4_K_M CPU — fallback de validacao de tool calls (porta 8104)
+Wants=network-online.target
+After=network-online.target local-fs.target
+RequiresMountsFor=/mnt/arquivos
+
+[Service]
+Type=exec
+User=igor
+Group=igor
+WorkingDirectory=/home/igor
+ExecStart=/home/igor/opt/prism-cpu-install-aswyUW/install/bin/llama-server \
+    -m /home/igor/models/lfm2.5-1.2b-cpu/LFM2.5-1.2B-Instruct-Q4_K_M.gguf \
+    --host 127.0.0.1 \
+    --port 8104 \
+    -c 8192 \
+    --threads 12 \
+    -ngl 0 \
+    --no-kv-offload \
+    -n 512 \
+    --parallel 1 \
+    --jinja \
+    --reasoning off \
+    --reasoning-format none \
+    --cache-reuse 256 \
+    --threads-http 4
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillMode=control-group
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

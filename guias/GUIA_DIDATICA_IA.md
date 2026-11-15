@@ -1,6 +1,6 @@
 # Guia Didático — Gestor de IA (`ia`)
 
-**Data:** 28/10/2026 (atualizado 09/11/2026 — 20 modelos, regras de escrita §2.1) · **Alvo:** `~/.local/bin/ia` · **Host:** `pc-sala`
+**Data:** 28/10/2026 (atualizado 09/11/2026 — 23 modelos, regras de escrita §2.1) · **Alvo:** `~/.local/bin/ia` · **Host:** `pc-sala`
 
 Este guia explica o gestor de IA actual de ponta a ponta: o que é, como
 lê a configuração, o que cada comando faz, como trocar de modelo na GPU
@@ -135,6 +135,7 @@ secção "Correção do gestor ia — 2026-11-09").
 | `qwen36` | qwen3.6-35b-a3b-q3-k-xl-gpu | GPU | 8096 | qwen36-q3.service | gpu-slot-1 |
 | `qwen36-q4` | qwen3.6-35b-a3b-q4-xl-gpu | GPU | 8098 | qwen36-q4.service | gpu-slot-1 |
 | `devstral` | devstral-small-2507-gpu | GPU | 8097 | devstral.service | gpu-slot-1 |
+| `qwen38-gyro-s` | qwen3.8-flash-next-gyro-s | GPU | 8081 | qwen38-gyro-s.service | gpu-slot-1 |
 | `maple-pro` | maple-pro-cpu | CPU | 8193 | local-maple.service | — |
 | `potato-coder` | potato-coder-12gb-fast | GPU | 8099 | potato-coder.service | gpu-slot-1 |
 | `glm47` | glm-4.7-flash-30b-a3b-gpu | GPU | 8100 | glm47-flash.service | gpu-slot-1 |

@@ -1,0 +1,13 @@
+diff --git a/ggml/src/ggml-impl.h b/ggml/src/ggml-impl.h
+index 62f07e1..c7e3e62 100644
+--- a/ggml/src/ggml-impl.h
++++ b/ggml/src/ggml-impl.h
+@@ -462,7 +462,7 @@ static inline ggml_fp16_t ggml_compute_fp32_to_fp16(float f) {
+ #if defined(_MSC_VER) || defined(__MINGW32__)
+ #include <intrin.h>
+ #else
+-#if defined(__AVX__) || defined(__AVX2__) || defined(__AVX512F__) || defined(__SSSE3__) || defined(__SSE3__) || defined(__SSE__)
++#if (defined(__AVX__) || defined(__AVX2__) || defined(__AVX512F__) || defined(__SSSE3__) || defined(__SSE3__) || defined(__SSE__)) && !defined(__CUDACC__)
+ #if !defined(__riscv)
+ #include <immintrin.h>
+ #endif
