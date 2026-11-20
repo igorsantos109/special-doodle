@@ -1,0 +1,49 @@
+# qwen25-15b-compact.service — Compactador de contexto (job em lote, NAO residente)
+#
+# PAPEL: resumir a cabeca de prompts acima de `compact_threshold_tokens`
+#   (default 16 384) do perfil `cpu-agent-v1`, preservando as chaves de
+#   factos de context_budget.FACT_KEYS. Disparado por
+#   src/pcsala_agent/cpu_agent.py::compact_context(), que faz
+#   `systemctl start` -> aguarda /health -> chama -> `systemctl stop`.
+# NAO e residente: sem `install` no alvo, nao sobe no boot. Como rede de
+#   seguranca, `RuntimeMaxSec=900` garante que o processo morre sozinho se o
+#   worker cair entre o start e o stop (nao fica 1,1 GB de RAM pendurados).
+# CLASSE: CPU, `-ngl 0` (zero VRAM, nao compete com o gpu-slot-1).
+# Porta 8105 (8095/8094 do plano estao tomados: Strata e flint GPU).
+# Pesos: ~/models/qwen2.5-1.5b-compact -> /mnt/arquivos/models/qwen2.5-1.5b-compact.
+
+[Unit]
+Description=Qwen2.5-1.5B-Instruct Q4_K_M CPU — compactador de contexto em lote (porta 8105)
+Wants=network-online.target
+After=network-online.target local-fs.target
+RequiresMountsFor=/mnt/arquivos
+
+[Service]
+Type=exec
+User=igor
+Group=igor
+WorkingDirectory=/home/igor
+ExecStart=/home/igor/opt/prism-cpu-install-aswyUW/install/bin/llama-server \
+    -m /home/igor/models/qwen2.5-1.5b-compact/qwen2.5-1.5b-instruct-q4_k_m.gguf \
+    --host 127.0.0.1 \
+    --port 8105 \
+    -c 32768 \
+    --threads 12 \
+    -ngl 0 \
+    --no-kv-offload \
+    -n 1024 \
+    --parallel 1 \
+    --jinja \
+    --reasoning off \
+    --reasoning-format none \
+    --threads-http 2
+Restart=no
+RuntimeMaxSec=900s
+TimeoutStopSec=30s
+KillMode=control-group
+MemoryMax=4G
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+UMask=0077

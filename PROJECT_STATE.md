@@ -29,7 +29,11 @@ interactivo.
 
 - `ia` — operação diária rápida (`~/.local/bin/ia`,
   `~/.config/ia/modelos.conf`): `list/status/health/on/off/restart/solo/doctor`.
-  6 modelos. **Guia: `guias/GUIA_DIDATICA_IA.md`.**
+  20 modelos. **Guia: `guias/GUIA_DIDATICA_IA.md`.**
+  **ATENÇÃO (agentes de IA):** `~/.config/ia/modelos.conf` é um **array JSON**
+  com comentários `#` em linha inteira — nunca reescrever em outro formato
+  (pipe/INI/YAML quebra todo o gestor; ver incidente 2026-11-09 em
+  `guias/GUIA_DIDATICA_IA.md` §2.1 e `HANDOFF.md`).
 - `./pcsala models` — operações auditadas em SQLite com guarda de VRAM.
 
 ## Politica de acesso
