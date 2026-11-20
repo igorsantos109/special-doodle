@@ -1,4 +1,4 @@
-# Tutorial: Gestor de Modelos
+# Tutorial: Gestor de Modelos (pcsala models)
 
 ## Comandos rápidos
 
@@ -10,50 +10,59 @@
 | Trocar GPU | `./pcsala models switch <id>` |
 | Iniciar CPU | `./pcsala models start <id>` |
 | Parar | `./pcsala models stop <id>` |
+| Ver VRAM | `./pcsala models vram` |
+| Diagnóstico completo | `./pcsala health` |
 
-## Modelos
+## Modelos (2026-11-20)
 
-### GPU (exclusivo — um por vez)
+### GPU (exclusivo — um por vez, grupo `gpu-slot-1`)
 
-| Alias | Modelo | Porta | Quando usar |
-|---|---|---|---|
-| `bonsai-27b-gpu` | Bonsai 27B + MTP | 8080 | padrão, raciocínio geral |
-| `laguna-xs-2.1-gpu` | Laguna XS 2.1 | 8082 | programação, 128K ctx, ~47 tok/s |
-| `ornith-35b-gpu` | Ornith 35B | 8092 | programação, ~40 tok/s |
-| `nemotron-3.5-30b-gpu` | Nemotron 3.5 Ternary 30B | 8083 | leitura/RAG/síntese, 262K ctx; ≤32K interativo (≥73 tok/s), fraco em matemática |
+| Alias | Modelo | Porta | Engine | Quando usar |
+|---|---|---|---|---|
+| `qwen36-q4` | Qwen3.6-35B-A3B Q4_K + **CPU MoE offload** | 8098 | llama.cpp CUDA | **Programação agêntica GPU**, 55k ctx, testado 6/6 |
+| `qwen36-q3` | Qwen3.6-35B-A3B Q3_K (primário) | 8096 | llama.cpp CUDA | Uso geral GPU, mais rápido (~35-40 tok/s) |
+| `qwen38-gyro-s` | Qwen3.8-Flash-Next Gyro-S TQ1_0 | 8081 | Strata 0.1.55 | Visão/MTP, 32k ctx |
+| `ttf-qwen38` | TTF Qwen3.8-27B ternário 1.58-bit | 8108 | ttf-home llama.cpp | Compressão extrema, 32k ctx |
+| `bonsai-27b-gpu` | Bonsai 27B + MTP (PrismML) | 8080 | llama.cpp | Legado, 64k ctx |
 
-### CPU (compartilhado)
+### CPU (compartilhado — todos simultâneos)
 
-| Alias | Modelo | Porta | Quando usar |
-|---|---|---|---|
-| `bonsai-9b-cpu` | Bonsai 9B | 8090 | tarefas leves, compressão |
-| `laguna-xs-2.1-cpu` | Laguna XS 2.1 | 8091 | programação (2,6 tok/s) |
+| Alias | Modelo | Porta | Engine | Quando usar |
+|---|---|---|---|---|
+| `maple-pro` | Maple-Pro 20B-A1B **YARN 65k** | 8193 | llama.cpp | **Programação agêntica CPU rápido** (~14 tok/s), 65k ctx |
+| `qwen3-30b-a3b-cpu` | Qwen3-30B-A3B MoE IQ4_K **YARN 65k** | 8109 | ik_llama.cpp | **Programação agêntica CPU pesado** (~7 tok/s), 65k ctx |
+| `qwen3-1.7b-cpu` | Qwen3-1.7B Q4_K_M | 8103 | llama.cpp | Validador tool calls, 8k ctx |
+| `qwen2.5-1.5b-cpu` | Qwen2.5-1.5B-Instruct | 8105 | llama.cpp | Compactador contexto, 32k ctx |
+| `lfm2.5-1.2b-cpu` | LFM2.5-1.2B-Instruct | 8104 | llama.cpp | Fallback ultra-rápido, 32k ctx |
+| `phi35-mini-cpu` | Phi-3.5-mini | 8106 | llama.cpp | Reasoning agent, 4k ctx, LAN liberada |
+| `bonsai2-cpu` | Bonsai 9B CPU | 8090 | llama.cpp | Batch/triagem, 32k ctx |
 
-## Trocar para Laguna GPU
+## Trocar GPU (com guarda VRAM)
 
 ```bash
-./pcsala models switch laguna-xs-2.1-gpu
-curl -s http://127.0.0.1:8082/health
+./pcsala models switch qwen36-q4     # Recomendado para agêntico (CPU MoE)
+./pcsala models switch qwen36-q3     # Primário, mais rápido
+./pcsala models switch qwen38-gyro-s # Strata (visão/MTP)
+./pcsala models switch ttf-qwen38    # Ternário 1.58-bit
+./pcsala models switch bonsai-27b-gpu # PrismML
 ```
 
-## Trocar para Nemotron
+## Iniciar/Parar CPU (independentes)
 
 ```bash
-./pcsala models switch nemotron-3.5-30b-gpu
-curl -s http://127.0.0.1:8083/health      # deve devolver 200
-
-# ou, sem guarda e com confirmação, pelo gestor diário:
-ia solo nemotron
+./pcsala models start maple-pro      # YARN 65k
+./pcsala models start qwen3-30b-a3b-cpu # YARN 65k
+./pcsala models stop qwen3-1.7b-cpu
 ```
 
-As tarefas usam o perfil do modelo: `--profile nemotron-ternary-v1`.
-Verifica a fila antes de trocar — o perfil `gpu-triage-v1` fica sem
-servidor enquanto o Nemotron estiver sozinho na GPU.
-
-## Voltar ao Bonsai
+## Diário sem guarda: `ia solo <alias>`
 
 ```bash
-./pcsala models switch bonsai-27b-gpu
+ia solo qwen36-q4   # GPU recomendada agêntica
+ia solo qwen36-q3   # GPU primário
+ia solo gyro-s      # Strata
+ia solo ttf-qwen38  # Ternário
+ia solo bonsai      # Bonsai 27B
 ```
 
 ## Dica
