@@ -66,6 +66,19 @@ Gerenciar LLMs locais no PC-SALA (192.168.1.184): Tesla P40 (23 GB VRAM) + CPU (
 | T5 JSON Estruturado | ✅ PASS | — |
 | **Total** | **5/5** | **~7 tok/s** |
 
+### Qwen3-Coder-30B-A3B GPU (8084) — MoE 30.5B (~3.3B active) Q4_K_M
+| Teste | Resultado | tps médio | Notas |
+|-------|-----------|-----------|-------|
+| T1 Tool Calling | ✅ PASS | ~44-62 | get_weather city=São Paulo |
+| T2 Code Gen (quicksort) | ✅ PASS | ~61 | Executável |
+| T3 Code Review (debug) | ✅ PASS | ~61 | Bug -1 identificado |
+| T4 Multi-file FastAPI | ✅ PASS | ~61 | main.py + test_main.py |
+| T5 JSON Estruturado | ✅ PASS | ~60 | 5 vantagens válidas |
+| T7 JSON Mode Strict | ✅ PASS | ~58 | response_format ok |
+| **Total** | **6/6** | **~60 tok/s** | |
+| **Contexto curto (<2k chars)** | ✅ PASS | ~57-61 | prompt_tokens 19-1026, resposta correta |
+| **Contexto >2k chars** | ❌ FALHA | — | **BUG:** mesmo erro do Tiel-Coder, llama-server conta milhões de tokens em prompts <100 chars |
+
 ### tiel-coder-35b-a3b GPU (8087) — MTP IQ4_XS
 | Teste | Resultado | tps médio | Notas |
 |-------|-----------|-----------|-------|
