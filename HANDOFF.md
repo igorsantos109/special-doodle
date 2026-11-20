@@ -23,6 +23,7 @@ Gerenciar LLMs locais no PC-SALA (192.168.1.184): Tesla P40 (23 GB VRAM) + CPU (
 |--------|-------|--------|----------|-----|--------|
 | **maple-pro 20B-A1B** | **8193** | llama.cpp YARN x2 | **65k** | ~1.3 GB | ✅ TESTADO 5/5 agentic, ~14 tok/s |
 | **qwen3-30b-a3b-moe-iq4k** | **8109** | ik_llama.cpp + YARN | **65k** | ~21 GB | ✅ TESTADO 5/5 agentic, ~7 tok/s |
+| **tiel-coder-35b-a3b** | **8087** | llama.cpp CUDA MTP IQ4_XS | ~32k* | ~17.3 GB | ✅ TESTADO 6/6 agentic, ~60 tok/s |
 | qwen3-1.7b | 8103 | llama.cpp | 8k | ~1.5 GB | Ativo (validador tools) |
 | qwen2.5-1.5b | 8105 | llama.cpp | 32k | ~1.2 GB | Ativo |
 | lfm2.5-1.2b | 8104 | llama.cpp | 32k | ~1 GB | Ativo (fallback) |
@@ -64,6 +65,18 @@ Gerenciar LLMs locais no PC-SALA (192.168.1.184): Tesla P40 (23 GB VRAM) + CPU (
 | T4 Multi-file | ✅ PASS | 7.2 |
 | T5 JSON Estruturado | ✅ PASS | — |
 | **Total** | **5/5** | **~7 tok/s** |
+
+### tiel-coder-35b-a3b GPU (8087) — MTP IQ4_XS
+| Teste | Resultado | tps médio | Notas |
+|-------|-----------|-----------|-------|
+| T1 Tool Calling | ✅ PASS | ~52 | get_weather city=São Paulo |
+| T2 Code Gen (quicksort) | ✅ PASS | ~64 | Executável |
+| T3 Code Review (debug) | ✅ PASS | ~61 | Bug -1 identificado |
+| T4 Multi-file FastAPI | ✅ PASS | ~63 | main.py + test_main.py |
+| T5 JSON Estruturado | ✅ PASS | ~60 | 5 vantagens válidas |
+| T7 JSON Mode Strict | ✅ PASS | ~58 | response_format |
+| **Total** | **6/6** | **~60 tok/s** | |
+| **Contexto Longo (>5k)** | ❌ FALHA | — | **BUG:** llama-server conta tokens incorretamente (ex: 5k chars → 2M tokens), excede 32768. Requer correção no build llama-cuda-official 73bfe6c. Contexto útil limitado a ~5k tokens. |
 
 ---
 
@@ -136,6 +149,7 @@ ssh igor@192.168.1.184 'curl -s http://127.0.0.1:8098/health && curl -s http://1
 |------|--------|
 | Push `origin/fase-0` | **BLOQUEADO** — repos GitHub arquivados (403 read-only) |
 | Gyro-S Strata restart com MCP | Pendente |
+| tiel-coder-35b-a3b contexto >5k | **FALHA — bug contagem tokens** — llama-server conta 2M+ tokens em prompts ~5k chars, excede 32768. Requer correção no build llama-cuda-official 73bfe6c. |
 | Firewall LAN para 8098/8109 | Liberar no nft/ufw se necessário |
 | qwen36-q3 (primário GPU) | Não testado esta sessão |
 | DSH GUI recarregar providers | **EM ANDAMENTO** — restart necessário, verificar nvidia-nim-tor aparece |
