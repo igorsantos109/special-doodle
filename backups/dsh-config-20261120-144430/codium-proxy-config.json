@@ -1,0 +1,88 @@
+{
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "listen_port": 18118,
+      "tag": "entrada",
+      "type": "mixed"
+    },
+    {
+      "listen": "127.0.0.1",
+      "listen_port": 9999,
+      "tag": "p-test_profile",
+      "type": "mixed"
+    },
+    {
+      "listen": "127.0.0.1",
+      "listen_port": 18119,
+      "tag": "p-omniroute",
+      "type": "mixed"
+    }
+  ],
+  "log": {
+    "level": "warn"
+  },
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "network": "tcp",
+      "server": "127.0.0.1",
+      "server_port": 9050,
+      "tag": "tor",
+      "type": "socks",
+      "version": "5"
+    },
+    {
+      "network": "tcp",
+      "password": "8da928ca4a8c662046711de03dfd2e9d",
+      "server": "127.0.0.1",
+      "server_port": 9050,
+      "tag": "tor-test_profile",
+      "type": "socks",
+      "username": "test_profile",
+      "version": "5"
+    },
+    {
+      "network": "tcp",
+      "password": "6ba500ebda4eb5b80456040a6b4cdbdc",
+      "server": "127.0.0.1",
+      "server_port": 9050,
+      "tag": "tor-omniroute",
+      "type": "socks",
+      "username": "omniroute",
+      "version": "5"
+    }
+  ],
+  "route": {
+    "final": "tor",
+    "rules": [
+      {
+        "action": "reject",
+        "inbound": null,
+        "protocol": "quic"
+      },
+      {
+        "action": "route",
+        "inbound": [
+          "p-test_profile"
+        ],
+        "outbound": "tor-test_profile"
+      },
+      {
+        "action": "route",
+        "inbound": [
+          "p-omniroute"
+        ],
+        "outbound": "tor-omniroute"
+      },
+      {
+        "action": "route",
+        "outbound": "direct",
+        "ip_is_private": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "name": "dsh-profile-web",
+  "private": true,
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "dsh-hot-installer",
+        "@deepseek-ai/dsh-experimental-auto-review",
+        "@deepseek-ai/dsh-experimental-forge-bundle",
+        "@deepseek-ai/dsh-experimental-plugin-market-bundle",
+        "@huanx/kilo-zen2dsh",
+        "dsh-our-free-model-fish",
+        "dsh-gateway-provider",
+        "dsh-at-file",
+        "dsh-llm-kilo-gateway",
+        "@deepseek-ai/dsh-experimental-badge-skill-bundle",
+        "@deepseek-ai/dsh-experimental-cot-translation-bundle",
+        "@deepseek-ai/dsh-experimental-voice-input-bundle",
+        "@deepseek-ai/dsh-experimental-agent-team-profile",
+        "@deepseek-ai/dsh-experimental-inspector-profile",
+        "dsh-ssh-toolkit"
+      ],
+      "patchReload": "live"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-http-proxy": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-plugin-market": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-subprocess": "0.2.2-rc.1",
+    "@dsh-external/dsh-omniroute-models": "github:publieople/dsh-omniroute-models",
+    "@huanx/kilo-zen2dsh": "^0.4.7",
+    "better-sidebar": "^0.5.1",
+    "dsh-at-file": "^0.6.3",
+    "dsh-gateway-provider": "^1.1.4",
+    "dsh-hot-installer": "^0.5.4",
+    "dsh-kiro": "github:dat-lequoc/dsh-kiro",
+    "dsh-llm-kilo-gateway": "1.0.0",
+    "dsh-model-orchestrator": "github:DeZhou123/dsh-model-orchestrator",
+    "dsh-openwiki": "^2.0.5",
+    "dsh-our-free-model": "2.1.0",
+    "dsh-our-free-model-fish": "github:fish-under-sea/dsh-our-free-model-fish",
+    "dsh-ssh-toolkit": "github:MaiwulanjiangMaiming/Deepseek-harness-SSH-toolkit",
+    "dsh-subagents": "^0.0.1",
+    "dsh-worktree": "^0.1.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-base": "0.2.2-rc.1"
+  }
+}

@@ -1,0 +1,43 @@
+# DSH Configuration Backup - 2026-11-20 14:44:30 (America/Sao_Paulo)
+
+## Files Backed Up
+- cordis.patch.yml          → ~/.dsh/profiles/web/cordis.patch.yml (perfil web ativo)
+- .env                      → ~/.dsh/.env (variáveis de ambiente, chaves API, proxy)
+- package.json              → ~/.dsh/profiles/web/package.json (perfil web, patchReload: live)
+- superagent-cordis.patch.yml → ~/.dsh/profiles/superagent/cordis.patch.yml (perfil alternativo)
+- codium-proxy-config.json  → ~/.config/codium-proxy/config.json (sing-box Tor gateway)
+
+## Key Configuration Changes (esta sessão)
+1. Tor Gateway: sing-box em 127.0.0.1:18118 → Tor daemon 127.0.0.1:9050
+   - Perfil isolado p-omniroute: 127.0.0.1:18119 (user: omniroute)
+   - Perfil isolado p-test_profile: 127.0.0.1:9999
+
+2. DSH Providers (em ~/.dsh/profiles/web/cordis.patch.yml):
+   - llm-newapi (dsh-gateway-provider): disabled: true
+   - llm-pi-ai: adicionado provider nvidia-nim-tor
+     - baseURL: https://integrate.api.nvidia.com/v1
+     - apiKeyEnv: NVIDIA_API_KEY
+     - Modelos: mistralai/mistral-large-4-1t-a52b, minimaxai/minimax-m3.1-flash, stepfun-ai/step-5-preview
+     - Todos com input: [text, image]
+
+3. agent-default-model alterado:
+   - provider: nvidia-nim-tor (antes: omniroute-nvidia)
+   - model: mistralai/mistral-large-4-1t-a52b
+   - reasoningEffort: high
+
+4. ~/.dsh/.env atualizado com:
+   - NVIDIA_API_KEY=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
+   - HTTP_PROXY/HTTPS_PROXY=http://127.0.0.1:18118 (DSH via Tor)
+   - OMNIROUTE_API_KEY=sk-8a28e0693071f310-7d76f5-fd2aea3b
+
+## Validação Funcional
+- curl --proxy 18118 https://integrate.api.nvidia.com/v1/chat/completions -> OK (exit IP 109.70.100.6 via Tor)
+- curl --proxy 18119 https://api.ipify.org -> OK (exit IP 185.220.101.165 via Tor, perfil isolado)
+
+## Como Restaurar
+cp /home/igor/ia-sh/pc-sala-agent/backups/dsh-config-20261120-144430/cordis.patch.yml ~/.dsh/profiles/web/cordis.patch.yml
+cp /home/igor/ia-sh/pc-sala-agent/backups/dsh-config-20261120-144430/.env ~/.dsh/.env
+# Recarregar GUI DSH (F5 no browser ou pnpm run dev:web)
+
+cp /home/igor/ia-sh/pc-sala-agent/backups/dsh-config-20261120-144430/codium-proxy-config.json ~/.config/codium-proxy/config.json
+systemctl --user restart codium-proxy
