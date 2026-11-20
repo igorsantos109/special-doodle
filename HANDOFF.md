@@ -66,6 +66,15 @@ Gerenciar LLMs locais no PC-SALA (192.168.1.184): Tesla P40 (23 GB VRAM) + CPU (
 | T5 JSON Estruturado | ✅ PASS | — |
 | **Total** | **5/5** | **~7 tok/s** |
 
+### Qwen2.5-1.5B Compactador de Contexto (8105) — 2026-11-20
+| Teste | Resultado | tps | Notas |
+|-------|-----------|-----|-------|
+| T1 Compactar fatos em JSON | ✅ PASS | ~50 | Extraiu projeto/tecnologia/dados corretamente |
+| T2 Resumo técnico curto (<25 palavras) | ✅ PASS | ~50 | 22 palavras, 141 chars |
+| T3 Extrair summary de logs | ✅ PASS | ~50 | JSON com erros/problemas/status |
+| T4 Compilar projeto longo em fatos-chave | ✅ PASS | ~50 | 4 chaves: nome/tech/bloqueio/next |
+| **Total** | **4/4** | **~50 tok/s** | 1.5B Q4_K_M CPU |
+
 ### Qwen3-Coder-30B-A3B GPU (8084) — MoE 30.5B (~3.3B active) Q4_K_M
 | Teste | Resultado | tps médio | Notas |
 |-------|-----------|-----------|-------|
@@ -107,7 +116,7 @@ Gerenciar LLMs locais no PC-SALA (192.168.1.184): Tesla P40 (23 GB VRAM) + CPU (
 | `qwen3-30b-a3b-cpu.service` | 8109 | **active** | CPU YARN 65k |
 | `local-maple.service` | 8193 | **active** | CPU YARN 65k |
 | `qwen3-1.7b-cpu.service` | 8103 | active | Validador tools |
-| `qwen2.5-1.5b-cpu.service` | 8105 | active | |
+| `qwen25-15b-compact.service` | 8105 | active (manual) | Compactador contexto (job em lote) |
 | `lfm2.5-1.2b-cpu.service` | 8104 | active | |
 | `phi35-mini-cpu.service` | 8106 | active | LAN 192.168.1.170 |
 | `bonsai2-cpu.service` | 8090 | active | |
