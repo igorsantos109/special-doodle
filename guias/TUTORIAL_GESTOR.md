@@ -20,7 +20,7 @@
 | Alias | Modelo | Porta | Engine | Quando usar |
 |---|---|---|---|---|
 | `qwen36-q4` | Qwen3.6-35B-A3B Q4_K + **CPU MoE offload** | 8098 | llama.cpp CUDA | **Programação agêntica GPU**, 55k ctx, testado 6/6 |
-| `qwen36-q4-strata` | Qwen3.6-35B-A3B UD-Q4_K_XL **Strata** | 8098 | **Strata 0.1.55** | **GPU agêntica + YaRN 32k + CPU MoE offload auto**, 55 tok/s |
+| `qwen36-q4-strata` | Qwen3.6-35B-A3B UD-Q4_K_XL **Strata** | 8098 | **Strata 0.1.55** | **GPU agêntica + YaRN 100k + CPU MoE offload auto + KV q4_0 + MTP**, 55 tok/s curto / 4.5 tok/s longo |
 | `qwen36-q3` | Qwen3.6-35B-A3B Q3_K (primário) | 8096 | llama.cpp CUDA | Uso geral GPU, mais rápido (~35-40 tok/s) |
 | `qwen38-gyro-s` | Qwen3.8-Flash-Next Gyro-S TQ1_0 | 8081 | Strata 0.1.55 | Visão/MTP, 32k ctx |
 | `ttf-qwen38` | TTF Qwen3.8-27B ternário 1.58-bit | 8108 | ttf-home llama.cpp | Compressão extrema, 32k ctx |
@@ -41,12 +41,12 @@
 ## Trocar GPU (com guarda VRAM)
 
 ```bash
-./pcsala models switch qwen36-q4        # Recomendado para agêntico (CPU MoE llama.cpp)
-./pcsala models switch qwen36-q4-strata # GPU agêntica + Strata 0.1.55 + YaRN 32k
-./pcsala models switch qwen36-q3        # Primário, mais rápido (~35-40 tok/s)
-./pcsala models switch qwen38-gyro-s    # Strata (visão/MTP)
-./pcsala models switch ttf-qwen38       # Ternário 1.58-bit
-./pcsala models switch bonsai-27b-gpu   # PrismML
+./pcsala models switch qwen36-q4        # Recomendado para agêntico (CPU MoE llama.cpp, 55k ctx)
+./pcsala models switch qwen36-q4-strata # GPU agêntica + Strata 0.1.55 + YaRN 100k + KV q4_0 + MTP
+./pcsala models switch qwen36-q3        # Primário, mais rápido (~35-40 tok/s, 55k ctx)
+./pcsala models switch qwen38-gyro-s    # Strata (visão/MTP, 32k ctx)
+./pcsala models switch ttf-qwen38       # Ternário 1.58-bit (32k ctx)
+./pcsala models switch bonsai-27b-gpu   # PrismML (64k ctx)
 ```
 
 ## Iniciar/Parar CPU (independentes)
@@ -61,7 +61,7 @@
 
 ```bash
 ia solo qwen36-q4        # GPU recomendada agêntica (llama.cpp CPU MoE)
-ia solo qwen36-q4-strata # GPU agêntica + Strata 0.1.55 + YaRN 32k
+ia solo qwen36-q4-strata # GPU agêntica + Strata 0.1.55 + YaRN 100k + KV q4_0 + MTP
 ia solo qwen36-q3        # GPU primário (mais rápido ~35-40 tok/s)
 ia solo gyro-s           # Strata (visão/MTP)
 ia solo ttf-qwen38       # Ternário 1.58-bit

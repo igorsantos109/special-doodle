@@ -37,7 +37,7 @@ pcsala models {list,status,health,start,stop,switch,vram,operation}
 | Ornith 35B GPU | 8092 | — | ~40 | PrismML runtime; exclusivo (gpu-slot-1) |
 | Nemotron 3.5 Ternary 30B | 8083 | 262K | 100 -> 24.9 | Q2_0 ternario 8.82 GiB; exclusivo (gpu-slot-1); perfil `nemotron-ternary-v1` |
 | **qwen36-q4 (llama.cpp)** | **8098** | **55K** | **~5.5** | **GPU agêntica + CPU MoE offload (--cpu-moe), testado 6/6** |
-| **qwen36-q4-strata (Strata)** | **8098** | **32K** | **~55** | **GPU agêntica + Strata 0.1.55 + YaRN 32k + CPU MoE offload auto + KV int8 + MTP** |
+| **qwen36-q4-strata (Strata)** | **8098** | **100K** | **~55 curto / ~4.5 longo** | **GPU agêntica + Strata 0.1.55 + YaRN 100k + CPU MoE offload auto + KV q4_0 + MTP** |
 | qwen36-q3 (primário) | 8096 | 55K | ~35-40 | GPU uso geral, mais rápido |
 | qwen38-gyro-s (Strata) | 8081 | 32K | ~20-30 | Visão/MTP |
 | qwen3-coder-30b-a3b | 8084 | 32K | ~60 | Programação GPU, testado 6/6 |

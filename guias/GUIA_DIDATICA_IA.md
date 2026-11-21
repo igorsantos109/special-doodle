@@ -109,7 +109,7 @@ secção "Correção do gestor ia — 2026-11-09").
 | Alias | Modelo | Porta | Engine | Gen tok/s | VRAM | Status |
 |---|---|---|---|---|---|---|
 | `qwen36-q4` | qwen36-q4 | 8098 | llama.cpp CUDA + **CPU MoE offload** | **~5.5** (agentic) | ~21 GB | ✅ **TESTADO 6/6 + loop + 45k ctx** |
-| `qwen36-q4-strata` | qwen3.6-35b-a3b-q4-xl | 8098 | **Strata 0.1.55** | **~55** | **~18-20 GB** | ✅ **TESTADO: CPU MoE offload, YaRN 32k, KV int8, MTP** |
+| `qwen36-q4-strata` | qwen3.6-35b-a3b-q4-xl | 8098 | **Strata 0.1.55** | **~55 curto / ~4.5 longo** | **~22.3 GB** | ✅ **TESTADO: CPU MoE offload, YaRN 100k, KV q4_0, MTP** |
 | `qwen36-q3` | qwen36-q3 | 8096 | llama.cpp CUDA | ~35-40 | ~16 GB | Parado (primário GPU) |
 | `gyro-s` | qwen38-gyro-s | 8081 | Strata 0.1.55 | ~20-30 | ~21 GB | Inativo |
 | `ttf-qwen38` | ttf-qwen38-27b | 8108 | ttf-home llama.cpp | ~25-35 | ~7.7 GB | Inativo |
@@ -117,7 +117,7 @@ secção "Correção do gestor ia — 2026-11-09").
 
 > **Regra dura:** GPU exclusivo — `ia solo <alias>` para alternar. **Nunca dois simultâneos.**
 > **qwen36-q4** usa `--cpu-moe` (offload experts MoE para CPU/RAM) — libera VRAM, mantém performance agentic.
-> **qwen36-q4-strata:** mesmo modelo UD-Q4_K_XL (22.9 GB), engine Strata 0.1.55. CPU MoE offload automático via `--gpu-roles 0=main`, KV int8 (`--kv int8`), MTP on. Preset: `qwen36-ud-q4-32k-cpu-offload`. Serviço: `qwen36-q4-strata.service`. Contexto 32k (100k falha por OOM na P40 24GB). VRAM ~18-20 GB vs 21.7 GB llama.cpp.
+> **qwen36-q4-strata:** mesmo modelo UD-Q4_K_XL (22.9 GB), engine Strata 0.1.55. CPU MoE offload automático via `--gpu-roles 0=main` + `STRATA_PIN_BY_NEED=1`, KV q4_0 (`--kv q4_0`), MTP on. Preset: `qwen36-ud-q4-100k-cpu-offload`. Serviço: `qwen36-q4-strata.service`. Contexto **100k confirmado** (health check: max_context=102400). VRAM ~22.3 GB / 24 GB (97%). Needle in haystack 54k tokens PASS. Prefill 434.7 tok/s. Decode 4.5 tok/s.
 
 ### CPU — Todos Ativos Simultaneamente
 
