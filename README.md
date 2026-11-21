@@ -36,6 +36,14 @@ pcsala models {list,status,health,start,stop,switch,vram,operation}
 | Laguna XS 2.1 GPU | 8082 | 128K | ~47 | Build Pascal; exclusivo (gpu-slot-1) |
 | Ornith 35B GPU | 8092 | — | ~40 | PrismML runtime; exclusivo (gpu-slot-1) |
 | Nemotron 3.5 Ternary 30B | 8083 | 262K | 100 -> 24.9 | Q2_0 ternario 8.82 GiB; exclusivo (gpu-slot-1); perfil `nemotron-ternary-v1` |
+| **qwen36-q4 (llama.cpp)** | **8098** | **55K** | **~5.5** | **GPU agêntica + CPU MoE offload (--cpu-moe), testado 6/6** |
+| **qwen36-q4-strata (Strata)** | **8098** | **32K** | **~55** | **GPU agêntica + Strata 0.1.55 + YaRN 32k + CPU MoE offload auto + KV int8 + MTP** |
+| qwen36-q3 (primário) | 8096 | 55K | ~35-40 | GPU uso geral, mais rápido |
+| qwen38-gyro-s (Strata) | 8081 | 32K | ~20-30 | Visão/MTP |
+| qwen3-coder-30b-a3b | 8084 | 32K | ~60 | Programação GPU, testado 6/6 |
+| tiel-coder-35b-a3b | 8087 | ~32K* | ~60 | MTP IQ4_XS, testado 6/6 |
+| maple-pro 20B-A1B (CPU YARN) | 8193 | 65K | ~14 | CPU agêntica rápido, testado 5/5 |
+| qwen3-30b-a3b (CPU YARN) | 8109 | 65K | ~7 | CPU agêntica pesado, testado 5/5 |
 
 Apenas o Bonsai 4B fica residente na GPU. O Bonsai 27B, Laguna GPU,
 Ornith e Nemotron compoem o grupo exclusivo `gpu-slot-1`: apenas um fica

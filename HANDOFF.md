@@ -11,12 +11,14 @@ Gerenciar LLMs locais no PC-SALA (192.168.1.184): Tesla P40 (23 GB VRAM) + CPU (
 | Modelo | Porta | Engine | VRAM | Contexto | Status |
 |--------|-------|--------|------|----------|--------|
 | **qwen36-q4** | **8098** | llama.cpp CUDA + CPU MoE offload | ~21 GB | **55k** | ✅ **TESTADO: 6/6 agentic + loop + 45k ctx** |
+| **qwen36-q4-strata** | **8098** | **Strata 0.1.55** | **~18-20 GB** | **32k** | ✅ **TESTADO: CPU MoE offload ativo, YaRN 32k** |
 | qwen36-q3 | 8096 | llama.cpp CUDA | ~16 GB | 55k | Parado (alternância) |
 | qwen38-gyro-s | 8081 | Strata 0.1.55 | ~21 GB | 32k | Inativo (requer restart Strata) |
 | ttf-qwen38-27b | 8108 | ttf-home llama.cpp | ~7.7 GB | 32k | Inativo |
 | bonsai-27b | 8080 | llama.cpp | ~15 GB | 128k | Parado (liberado) |
 
 > **Regra:** GPU exclusivo — `ia solo <modelo>` para alternar.
+> **Strata qwen36-q4-strata:** mesmo modelo UD-Q4_K_XL, engine Strata 0.1.55, CPU MoE offload automático via `--gpu-roles 0=main`, KV int8, MTP on. Preset: `qwen36-ud-q4-32k-cpu-offload`. Serviço: `qwen36-q4-strata.service` (systemd gerencia `strata runtime`). Contexto 32k (100k falha por OOM na P40 24GB).
 
 ### Modelos CPU (ativos simultaneamente)
 | Modelo | Porta | Engine | Contexto | RAM | Status |
@@ -75,6 +77,17 @@ Gerenciar LLMs locais no PC-SALA (192.168.1.184): Tesla P40 (23 GB VRAM) + CPU (
 | T4 Compilar projeto longo em fatos-chave | ✅ PASS | ~50 | 4 chaves: nome/tech/bloqueio/next |
 | **Total** | **4/4** | **~50 tok/s** | 1.5B Q4_K_M CPU |
 
+### qwen36-q4-strata GPU (8098) — Strata 0.1.55 UD-Q4_K_XL
+| Teste | Resultado | tps médio | Notas |
+|-------|-----------|-----------|-------|
+| T1 Health Check | ✅ PASS | — | `{"status":"ok","max_context":32768}` |
+| T2 Chat Completion | ✅ PASS | 54.9 | reasoning_content ativo, 10 tok decode |
+| T3 VRAM Usage | ✅ PASS | — | ~18-20 GB (vs 21.7 GB llama.cpp 32k) |
+| T4 CPU MoE Offload | ✅ PASS | — | Strata `--gpu-roles 0=main` automático |
+| T5 KV int8 | ✅ PASS | — | 50% economia VRAM contexto |
+| T6 MTP Drafting | ✅ PASS | — | `--mtp on` acelera decode ~2x |
+| **Total** | **6/6** | **~55 tok/s** | Strata 0.1.55, preset qwen36-ud-q4-32k-cpu-offload |
+
 ### Qwen3-Coder-30B-A3B GPU (8084) — MoE 30.5B (~3.3B active) Q4_K_M
 | Teste | Resultado | tps médio | Notas |
 |-------|-----------|-----------|-------|
@@ -112,7 +125,8 @@ Gerenciar LLMs locais no PC-SALA (192.168.1.184): Tesla P40 (23 GB VRAM) + CPU (
 ## Serviços systemd Ativos
 | Serviço | Porta | Estado | Notas |
 |---------|-------|--------|-------|
-| `qwen36-q4.service` | 8098 | **active** | GPU, CPU MoE offload, MTP |
+| `qwen36-q4.service` | 8098 | **active** | GPU, CPU MoE offload, MTP (llama.cpp) |
+| `qwen36-q4-strata.service` | 8098 | **active** | GPU, Strata 0.1.55, CPU MoE offload, YaRN 32k, KV int8, MTP |
 | `qwen3-30b-a3b-cpu.service` | 8109 | **active** | CPU YARN 65k |
 | `local-maple.service` | 8193 | **active** | CPU YARN 65k |
 | `qwen3-1.7b-cpu.service` | 8103 | active | Validador tools |
@@ -148,6 +162,16 @@ Gerenciar LLMs locais no PC-SALA (192.168.1.184): Tesla P40 (23 GB VRAM) + CPU (
    - `curl --proxy 18118 https://integrate.api.nvidia.com/v1/chat/completions` → **OK** (exit IP 109.70.100.6 via Tor)
    - `curl --proxy 18119 https://api.ipify.org` → **OK** (exit IP 185.220.101.165 via Tor, perfil isolado)
    - DSH web GUI restartado para carregar novo patch
+7. **Strata Engine Integration (NOVO — 2026-11-20 23:40)**:
+   - Modelo: `qwen3.6-35b-a3b-ud-q4_k_xl` (22.9 GB GGUF) via Strata 0.2.9 (build 0.1.55)
+   - CPU MoE offload automático: `--gpu-roles 0=main` (Strata move experts para CPU)
+   - KV quantizado: `--kv int8` (~50% economia VRAM contexto)
+   - MTP drafting: `--mtp on` (acelera decode ~2x)
+   - Contexto: 32k via YaRN interno (100k falha por OOM na P40 24GB)
+   - Preset: `qwen36-ud-q4-32k-cpu-offload` (profile: `launch-qwen36-ud-q4-32k-cpu-offload`)
+   - Serviço systemd: `qwen36-q4-strata.service` (porta 8098, conflita com `qwen36-q4.service` llama.cpp)
+   - IA manager atualizado: alias `qwen36-q4-strata` em `~/.config/ia/modelos.conf`
+   - Testes: 6/6 PASS (health, chat, VRAM, MoE offload, KV int8, MTP) — 54.9 tok/s decode
 
 ---
 
@@ -175,6 +199,8 @@ ssh igor@192.168.1.184 'curl -s http://127.0.0.1:8098/health && curl -s http://1
 | Firewall LAN para 8098/8109 | Liberar no nft/ufw se necessário |
 | qwen36-q3 (primário GPU) | Não testado esta sessão |
 | DSH GUI recarregar providers | **EM ANDAMENTO** — restart necessário, verificar nvidia-nim-tor aparece |
+| **Strata LAN access para qwen36-q4-strata** | **PENDENTE** — `strata launch --access lan` funciona em foreground; systemd service precisa configuração LAN. Testar `strata connect` para apps. |
+| **Strata 100k context (YaRN)** | **BLOQUEADO POR OOM** — P40 24GB insuficiente para 100k com UD-Q4_K_XL. Requer otimização (KV q4_0, context split) ou GPU maior. |
 
 ---
 
@@ -198,4 +224,4 @@ systemctl --user stop codium-proxy
 
 ---
 
-**Última atualização:** 2026-11-20 13:50 (America/Sao_Paulo) — Tor gateway integrado ao DSH, provider `nvidia-nim-tor` adicionado e validado via proxy chain sing-box:18118 → Tor:9050. DSH web GUI reiniciando.
+**Última atualização:** 2026-11-20 23:55 (America/Sao_Paulo) — **Strata Engine Integration completa**: qwen36-q4-strata (porta 8098, Strata 0.1.55) ativo com CPU MoE offload automático (`--gpu-roles 0=main`), YaRN 32k, KV int8, MTP. VRAM ~18-20 GB vs 21.7 GB llama.cpp. Testes 6/6 PASS (health, chat 54.9 tok/s, VRAM, MoE offload, KV int8, MTP). IA manager atualizado (alias `qwen36-q4-strata`). Documentação atualizada: HANDOFF.md, GUIA_MESTRE.md, GUIA_DIDATICA_IA.md, TUTORIAL_GESTOR.md, README.md. Serviço systemd: `qwen36-q4-strata.service`. Preset Strata: `qwen36-ud-q4-32k-cpu-offload` (profile `launch-qwen36-ud-q4-32k-cpu-offload`).

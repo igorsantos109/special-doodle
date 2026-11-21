@@ -1,6 +1,6 @@
 # Guia Didático — Gestor de IA (`ia`)
 
-**Data:** 20/11/2026 (atualizado — qwen36-q4 GPU MoE offload, qwen3-30b-a3b YARN, maple-pro YARN) · **Alvo:** `~/.local/bin/ia` · **Host:** `pc-sala` (192.168.1.184)
+**Data:** 20/11/2026 (atualizado — qwen36-q4 GPU MoE offload, qwen3-30b-a3b YARN, maple-pro YARN, **Strata qwen36-q4-strata**) · **Alvo:** `~/.local/bin/ia` · **Host:** `pc-sala` (192.168.1.184)
 
 Este guia explica o gestor de IA actual de ponta a ponta: o que é, como
 lê a configuração, o que cada comando faz, como trocar de modelo na GPU
@@ -109,6 +109,7 @@ secção "Correção do gestor ia — 2026-11-09").
 | Alias | Modelo | Porta | Engine | Gen tok/s | VRAM | Status |
 |---|---|---|---|---|---|---|
 | `qwen36-q4` | qwen36-q4 | 8098 | llama.cpp CUDA + **CPU MoE offload** | **~5.5** (agentic) | ~21 GB | ✅ **TESTADO 6/6 + loop + 45k ctx** |
+| `qwen36-q4-strata` | qwen3.6-35b-a3b-q4-xl | 8098 | **Strata 0.1.55** | **~55** | **~18-20 GB** | ✅ **TESTADO: CPU MoE offload, YaRN 32k, KV int8, MTP** |
 | `qwen36-q3` | qwen36-q3 | 8096 | llama.cpp CUDA | ~35-40 | ~16 GB | Parado (primário GPU) |
 | `gyro-s` | qwen38-gyro-s | 8081 | Strata 0.1.55 | ~20-30 | ~21 GB | Inativo |
 | `ttf-qwen38` | ttf-qwen38-27b | 8108 | ttf-home llama.cpp | ~25-35 | ~7.7 GB | Inativo |
@@ -116,6 +117,7 @@ secção "Correção do gestor ia — 2026-11-09").
 
 > **Regra dura:** GPU exclusivo — `ia solo <alias>` para alternar. **Nunca dois simultâneos.**
 > **qwen36-q4** usa `--cpu-moe` (offload experts MoE para CPU/RAM) — libera VRAM, mantém performance agentic.
+> **qwen36-q4-strata:** mesmo modelo UD-Q4_K_XL (22.9 GB), engine Strata 0.1.55. CPU MoE offload automático via `--gpu-roles 0=main`, KV int8 (`--kv int8`), MTP on. Preset: `qwen36-ud-q4-32k-cpu-offload`. Serviço: `qwen36-q4-strata.service`. Contexto 32k (100k falha por OOM na P40 24GB). VRAM ~18-20 GB vs 21.7 GB llama.cpp.
 
 ### CPU — Todos Ativos Simultaneamente
 
@@ -151,12 +153,15 @@ secção "Correção do gestor ia — 2026-11-09").
 ### Exemplos GPU (alternância)
 
 ```bash
-ia solo qwen36-q4   # para qwen36-q3/gyro-s/ttf/bonsai, sobe qwen36-q4 (8098, CPU MoE)
-ia solo qwen36-q3   # para qwen36-q4/gyro-s/ttf/bonsai, sobe qwen36-q3 (8096, primário)
-ia solo gyro-s      # para qwen36-q4/q3/ttf/bonsai, sobe gyro-s (8081, Strata)
-ia solo ttf-qwen38  # para gyro-s/qwen36/bonsai, sobe ttf-qwen38 (8108, ttf-home)
-ia solo bonsai      # para gyro-s/ttf/qwen36, sobe bonsai-27b (8080, PrismML)
+ia solo qwen36-q4        # para qwen36-q3/gyro-s/ttf/bonsai, sobe qwen36-q4 (8098, llama.cpp CPU MoE)
+ia solo qwen36-q4-strata # para qwen36-q3/gyro-s/ttf/bonsai, sobe qwen36-q4 Strata (8098, Strata 0.1.55)
+ia solo qwen36-q3        # para qwen36-q4/gyro-s/ttf/bonsai, sobe qwen36-q3 (8096, primário)
+ia solo gyro-s           # para qwen36-q4/q3/ttf/bonsai, sobe gyro-s (8081, Strata)
+ia solo ttf-qwen38       # para gyro-s/ttf/qwen36/bonsai, sobe ttf-qwen38 (8108, ttf-home)
+ia solo bonsai           # para gyro-s/ttf/qwen36/bonsai, sobe bonsai-27b (8080, PrismML)
 ```
+
+> **Nota:** `qwen36-q4` e `qwen36-q4-strata` usam a mesma porta (8098) e o mesmo modelo GGUF. O `ia solo` para o serviço ativo antes de subir o solicitado (via `Conflicts=` no systemd). Não rode ambos simultaneamente.
 
 ### Exemplos CPU (independentes)
 

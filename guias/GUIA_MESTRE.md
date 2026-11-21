@@ -27,6 +27,7 @@ CLI pcsala / ia  →  Worker (LangGraph) / ModelCoordinator
 | Modelo | Porta | Engine | Ctx | Gen tok/s | VRAM | Status |
 |---|---|---|---|---|---|---|
 | **qwen36-q4** | **8098** | llama.cpp CUDA + CPU MoE offload | 55K | **~5.5** | ~21 GB | ✅ **TESTADO: 6/6 agentic + loop + 45k ctx** |
+| **qwen36-q4-strata** | **8098** | **Strata 0.1.55** | **32K** | **~55** | **~18-20 GB** | ✅ **TESTADO: CPU MoE offload, YaRN 32k, KV int8, MTP** |
 | qwen36-q3 | 8096 | llama.cpp CUDA | 55K | ~35-40 | ~16 GB | Parado (primário GPU) |
 | qwen38-gyro-s | 8081 | Strata 0.1.55 | 32K | ~20-30 | ~21 GB | Inativo (requer restart Strata) |
 | ttf-qwen38-27b | 8108 | ttf-home llama.cpp | 32K | ~25-35 | ~7.7 GB | Inativo |
@@ -34,6 +35,7 @@ CLI pcsala / ia  →  Worker (LangGraph) / ModelCoordinator
 
 > **Regra dura:** GPU exclusivo — `ia solo <modelo>` para alternar. **Nunca dois simultâneos.**
 > qwen36-q4 usa `--cpu-moe` (offload experts MoE para CPU/RAM) — libera VRAM, mantém performance.
+> **qwen36-q4-strata:** mesmo modelo UD-Q4_K_XL (22.9 GB), engine Strata 0.1.55. CPU MoE offload automático via `--gpu-roles 0=main`, KV int8 (`--kv int8`), MTP on. Preset: `qwen36-ud-q4-32k-cpu-offload`. Serviço: `qwen36-q4-strata.service`. Contexto 32k (100k falha por OOM na P40 24GB). VRAM ~18-20 GB vs 21.7 GB llama.cpp.
 
 ### CPU — Todos Ativos Simultaneamente
 
@@ -98,7 +100,8 @@ ia doctor
 
 | Serviço | Porta | Estado | Notas |
 |---|---|---|---|
-| `qwen36-q4.service` | 8098 | **active** | GPU, CPU MoE offload (`--cpu-moe`), MTP |
+| `qwen36-q4.service` | 8098 | **active** | GPU, CPU MoE offload (`--cpu-moe`), MTP (llama.cpp) |
+| `qwen36-q4-strata.service` | 8098 | **active** | GPU, Strata 0.1.55, CPU MoE offload, YaRN 32k, KV int8, MTP |
 | `qwen36-q3.service` | 8096 | inactive | Primário GPU, CUDA |
 | `qwen3-30b-a3b-cpu.service` | 8109 | **active** | ik_llama.cpp, YARN 65K, 20 threads |
 | `local-maple.service` | 8193 | **active** | YARN 65K ctx, localhost only |
