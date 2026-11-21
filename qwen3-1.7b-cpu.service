@@ -8,8 +8,8 @@
 #   executado por aqui — ver cpu_agent.validate_tool_call().
 # CLASSE: CPU, `-ngl 0` (zero VRAM, nao disputa o gpu-slot-1 nem a P40).
 # Porta 8103: as sugeridas no plano (8094/8095) estao TOMADAS — 8094 e do
-#   flint.service (GPU) e 8095 esta reservado ao Strata; 8101/8102 do
-#   flint-ternary/fusion4. 8103+ estao livres e fora do nft/ufw (loopback).
+#   flint.service (GPU) e 8095 esta reservado ao Strata; 8101 e do flint-ternary e 8102 era do Fusion4 (removido em 2026-11-21).
+#   8103+ estao livres e fora do nft/ufw (loopback).
 # Engine: PrismML llama.cpp (build CPU 73bfe6c) — o mesmo binario das units
 #   CPU da casa (bonsai2-cpu). O `ik_llama.cpp` citado no plano NAO esta
 #   instalado nesta maquina; para Q4_K_M + qwen3 o build local cobre.

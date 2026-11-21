@@ -6,7 +6,7 @@
 #   1.7B no mesmo hardware, por isso e a rota de reavaliacao barata.
 # CLASSE: CPU, `-ngl 0` (zero VRAM; nao entra no gpu-slot-1).
 # Porta 8104 (8095 do plano esta reservado ao Strata; 8101/8102 do
-#   flint-ternary/fusion4; 8094 do flint GPU).
+#   flint-ternary (8101) e Fusion4 (8102, removido em 2026-11-21); 8094 do flint GPU).
 # Engine: PrismML llama.cpp CPU (build 73bfe6c) — unico binario local com
 #   arquitectura `lfm2` na variante CPU (tambem existe em llama-cuda-official
 #   e millie-runtime). Verificado: strings do binario contem `lfm2`.

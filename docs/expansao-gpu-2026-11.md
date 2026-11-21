@@ -1,20 +1,25 @@
 # Expansao GPU 08/11/2026 — Ternary-Flint-40B e PXA-Fusion4-35B na Tesla P40
 
-Duas famillas novas no `gpu-slot-1`, ambas com pesos em **/dev/sdb1**
+**⚠️ Fusion4 REMOVIDO em 2026-11-21:** pontuou 0/7 nos testes agenticos. Serviço parado,
+unit desinstalado do systemd, pesos apagados (~17,9 GiB liberados no sdb1), removido do
+gestor `ia` (ver `HANDOFF.md` e commit `4cfabf6`). Build PXA (`/home/igor/opt/pxa/build`)
+mantido por enquanto (pode ser necessario para outros modelos com quant `pxq4`).
+
+Duas famlias novas no `gpu-slot-1`, ambas com pesos em **/dev/sdb1**
 (`/mnt/arquivos/models/…`, ext4, `ia move`-compativel) e symlink em
 `~/models/<nome>`, ambas no allowlist do `pcsala models switch` e do gestor `ia`.
 
-| | Ternary-Flint-40B | PXA-Fusion4-35B |
+| | Ternary-Flint-40B | PXA-Fusion4-35B ⚠️ REMOVIDO |
 |---|---|---|
-| unit / porta | `flint-ternary.service` / **8101** | `fusion4.service` / **8102** |
-| id pcsala | `flint-ternary-40b` | `fusion4-35b` |
-| alias `ia` | `flint-ternary` | `fusion4` |
-| perfil | `flint-ternary-v1` (STRATA activo) | `fusion4-agentic-v1` |
-| engine | fork **PrismML** `prism` @ 6447906bf | **PXA** v4.0 @ 0a369a5 |
-| build | `/home/igor/opt/prism-flint/build` | `/home/igor/opt/pxa/build` |
+| unit / porta | `flint-ternary.service` / **8101** | ~~`fusion4.service` / **8102**~~ |
+| id pcsala | `flint-ternary-40b` | ~~`fusion4-35b`~~ |
+| alias `ia` | `flint-ternary` | ~~`fusion4`~~ |
+| perfil | `flint-ternary-v1` (STRATA activo) | ~~`fusion4-agentic-v1`~~ |
+| engine | fork **PrismML** `prism` @ 6447906bf | ~~**PXA** v4.0 @ 0a369a5~~ |
+| build | `/home/igor/opt/prism-flint/build` | ~~`/home/igor/opt/pxa/build`~~ |
 | CMake | `-DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=61` | idem |
-| quant | **`PQ2_0` 10,97 GiB** (escolhido por medicao) · `PTQ1_0` 9,31 GiB fica como fallback | `PXQ4` 17,97 GiB |
-| ctx da unit | 100 000 | 32 768 (ver §4.4) |
+| quant | **`PQ2_0` 10,97 GiB** (escolhido por medicao) · `PTQ1_0` 9,31 GiB fica como fallback | ~~`PXQ4` 17,97 GiB~~ |
+| ctx da unit | 100 000 | ~~32 768 (ver §4.4)~~ |
 
 ## 1. Porque sao duas engines e nao uma
 
@@ -180,7 +185,10 @@ como fallback explicito para cartas apertadas (é o unico que cabe ao lado de
 um segundo modelo grande, e o ficheiro de 9,31 GiB citado na tabela de
 partida), bastando trocar o `-m` da unit — nenhum outro flag muda.
 
-### 4.3 PXA-Fusion4-35B `PXQ4` — `-c 32768 -ngl 99 -sm layer -ctk q8_0 -ctv f16`
+### 4.3 PXA-Fusion4-35B `PXQ4` — ~~`-c 32768 -ngl 99 -sm layer -ctk q8_0 -ctv f16`~~
+
+**REMOVIDO (2026-11-21):** pontuou 0/7 nos testes agenticos. Pesos apagados
+(~17,9 GiB liberados no sdb1). Secção mantida como histórico técnico.
 
 Carga: `model size = 17,961 GiB (4,345 BPW)`, `KV buffer 553,44 MiB`,
 `compute buffer 2 300,05 MiB` → **21 263 MiB usados, 1 644 MiB livres** (a
@@ -214,7 +222,9 @@ híbrido deltanet, e a carta e a P40 nunca medida. Por isso a unit
 quantizado exige `-fa on`: "Quantized V cache cannot be used without flash
 attention").
 
-### 4.4 Limite de contexto do Fusion4 numa P40
+### 4.4 Limite de contexto do ~~Fusion4~~ (REMOVIDO) numa P40
+
+**REMOVIDO (2026-11-21):** Fusion4 eliminado por pontuar 0/7. Secção mantida como histórico técnico.
 
 `-fa off` paga um compute buffer de atencao generica (2,3 GB a 32k, 3,4 GB a
 49k). Medido:
@@ -284,9 +294,9 @@ mecanismo intacto e sem alteracoes: `start` e `switch` medem antes de mandar
 ./pcsala models switch flint-ternary-40b      # ou: ia solo flint-ternary
 python3 scripts/bench_gpu_slot.py flint tudo
 
-# trocar para o Fusion4 a 32k
-./pcsala models switch fusion4-35b            # ou: ia solo fusion4
-python3 scripts/bench_gpu_slot.py fusion4 tudo
+# ~~trocar para o Fusion4 a 32k~~ (REMOVIDO em 2026-11-21, pontuou 0/7)
+# ~~./pcsala models switch fusion4-35b            # ou: ia solo fusion4~~
+# ~~python3 scripts/bench_gpu_slot.py fusion4 tudo~~
 
 # so um degrau da escala, ou um endpoint explicito
 python3 scripts/bench_gpu_slot.py flint escala --de 65536

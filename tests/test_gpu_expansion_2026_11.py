@@ -5,7 +5,7 @@ inferencia, e a guarda de VRAM de 1,5 GB na presenca do Bonsai 4B residente.
 
 Contexto de engenharia (docs/expansao-gpu-2026-11.md):
 - fusion4-35b usa PXQ4 (id GGML 252), so a engine PXA o le.
-- O Ternary-Flint-40B (8101) foi removido da maquina e do gestor em 08/11.
+- Ternary-Flint-40B (8101) removido de maquina/gestor; PXA-Fusion4-35B (8102) removido em 2026-11-21.
 O modelo partilha o slot exclusivo gpu-slot-1 numa unica P40.
 """
 import pytest
