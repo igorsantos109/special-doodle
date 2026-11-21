@@ -27,6 +27,8 @@ pcsala models {list,status,health,start,stop,switch,vram,operation}
 
 ## Models (GPU is exclusive for big models — one at a time)
 
+## Models (GPU is exclusive for big models — one at a time)
+
 | Modelo | Porta | Ctx | Gen tok/s | Notas |
 |---|---|---|---|---|
 | Bonsai 27B GPU + MTP | 8080 | 64K | 28-48 | Primario, exclusivo (gpu-slot-1) |

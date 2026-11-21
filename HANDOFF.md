@@ -14,7 +14,6 @@ Gerenciar LLMs locais no PC-SALA (192.168.1.184): Tesla P40 (23 GB VRAM) + CPU (
 | **qwen36-q4-strata** | **8098** | **Strata 0.1.55** | **~22.3 GB** | **100k** | ✅ **TESTADO: CPU MoE offload, YaRN 100k, KV q4_0, MTP** |
 | qwen36-q3 | 8096 | llama.cpp CUDA | ~16 GB | 55k | Parado (alternância) |
 | qwen38-gyro-s | 8081 | Strata 0.1.55 | ~21 GB | 32k | Inativo (requer restart Strata) |
-| ttf-qwen38-27b | 8108 | ttf-home llama.cpp | ~7.7 GB | 32k | Inativo |
 | bonsai-27b | 8080 | llama.cpp | ~15 GB | 128k | Parado (liberado) |
 
 > **Regra:** GPU exclusivo — `ia solo <modelo>` para alternar.
@@ -124,7 +123,7 @@ Gerenciar LLMs locais no PC-SALA (192.168.1.184): Tesla P40 (23 GB VRAM) + CPU (
 ---
 
 ## Configuração DSH (DeepSeek Harness Web GUI — porta 3080)
-- `~/.dsh/profiles/web/cordis.patch.yml` — providers: `ttf-qwen38` (8108), `gyro-s` (8081), `qwen3-30b-a3b` (8109, header `PCSALA_LOCAL_API_KEY`), `qwen36-q4` (8098), `maple-pro` (8193), **`nvidia-nim-tor` (via Tor)**
+- `~/.dsh/profiles/web/cordis.patch.yml` — providers: `gyro-s` (8081), `qwen3-30b-a3b` (8109, header `PCSALA_LOCAL_API_KEY`), `qwen36-q4` (8098), `maple-pro` (8193), **`nvidia-nim-tor` (via Tor)**
 - `~/.dsh/.env` — `PCSALA_LOCAL_API_KEY=pcsala-open-no-auth`, `DSH_LOCAL_API_KEY=sk-strata-...`, `NVIDIA_API_KEY=nvapi-PZ9LEaX_...`, `OMNIROUTE_API_KEY=sk-8a28e069...`
 - **Reinício GUI necessário:** `pnpm run dev:web`
 
@@ -227,8 +226,8 @@ ssh igor@192.168.1.184 'curl -s http://127.0.0.1:8098/health && curl -s http://1
 
 ## Reversão Rápida (GPU)
 ```bash
-ssh igor@192.168.1.184 'sudo systemctl stop qwen36-q4 qwen36-q3 qwen38-gyro-s ttf-qwen38-27b'
-ssh igor@192.168.1.184 'sudo systemctl disable qwen36-q4 qwen36-q3 qwen38-gyro-s ttf-qwen38-27b'
+ssh igor@192.168.1.184 'sudo systemctl stop qwen36-q4 qwen36-q3 qwen38-gyro-s '
+ssh igor@192.168.1.184 'sudo systemctl disable qwen36-q4 qwen36-q3 qwen38-gyro-s '
 ```
 
 ---

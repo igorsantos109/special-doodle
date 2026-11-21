@@ -30,7 +30,6 @@ CLI pcsala / ia  →  Worker (LangGraph) / ModelCoordinator
 | **qwen36-q4-strata** | **8098** | **Strata 0.1.55** | **100K** | **~55 curto / ~4.5 longo** | **~22.3 GB** | ✅ **TESTADO: CPU MoE offload, YaRN 100k, KV q4_0, MTP** |
 | qwen36-q3 | 8096 | llama.cpp CUDA | 55K | ~35-40 | ~16 GB | Parado (primário GPU) |
 | qwen38-gyro-s | 8081 | Strata 0.1.55 | 32K | ~20-30 | ~21 GB | Inativo (requer restart Strata) |
-| ttf-qwen38-27b | 8108 | ttf-home llama.cpp | 32K | ~25-35 | ~7.7 GB | Inativo |
 | bonsai-27b | 8080 | llama.cpp (PrismML) | 64K | 28-48 | ~15 GB | Parado (liberado) |
 
 > **Regra dura:** GPU exclusivo — `ia solo <modelo>` para alternar. **Nunca dois simultâneos.**
@@ -111,7 +110,6 @@ ia doctor
 | `phi35-mini-cpu.service` | 8106 | active | LAN 192.168.1.170 |
 | `bonsai2-cpu.service` | 8090 | active | Bonsai 9B CPU |
 | `qwen38-gyro-s.service` | 8081 | inactive | Strata, GPU |
-| `ttf-qwen38.service` | 8108 | inactive | ttf-home, GPU |
 | `bonsai2-27b.service` | 8080 | inactive | PrismML, GPU |
 | `pcsala-worker.service` | — | active | Worker contínuo LangGraph |
 
@@ -123,9 +121,7 @@ ia doctor
 
 - `~/.dsh/profiles/web/cordis.patch.yml` — providers:
   - `qwen36-q4` → `http://192.168.1.184:8098`
-  - `qwen36-q3` → `http://192.168.1.184:8096`
-  - `ttf-qwen38` → `http://127.0.0.1:8108`
-  - `gyro-s` → `http://127.0.0.1:8081`
+  - `qwen36-q3` → `http://192.168.1.184:8096`  - `gyro-s` → `http://127.0.0.1:8081`
   - `qwen3-30b-a3b` → `http://192.168.1.184:8109` (header `PCSALA_LOCAL_API_KEY`)
   - `maple-pro` → `http://127.0.0.1:8193`
 - `~/.dsh/.env` — `PCSALA_LOCAL_API_KEY=pcsala-open-no-auth`, `DSH_LOCAL_API_KEY=sk-strata-...`

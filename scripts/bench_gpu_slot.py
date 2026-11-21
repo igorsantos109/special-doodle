@@ -13,13 +13,10 @@ Uso:
     python3 scripts/bench_gpu_slot.py flint ferramentas
     python3 scripts/bench_gpu_slot.py flint tudo            # tarefas+escala+ferramentas+needle
 
-    ./pcsala models switch fusion4-35b
-    python3 scripts/bench_gpu_slot.py fusion4 tudo
-
+        
 Endpoints (sobrepoe com --endpoint ou pela variavel do perfil):
     flint    -> PCSALA_ENDPOINT_FLINT_TERNARY_V1   (default http://127.0.0.1:8101)
-    fusion4  -> PCSALA_ENDPOINT_FUSION4_AGENTIC_V1 (default http://127.0.0.1:8102)
-
+    
 Notas de capacidade (medicao 2026-11-08, Tesla P40 sm_61, 23 040 MiB):
     ver docs/expansao-gpu-2026-11.md — a guarda de VRAM do `pcsala models
     switch` exige folga >= 1 536 MiB com o Bonsai 4B residente na GPU.
@@ -41,13 +38,8 @@ MODELOS = {
         "model_id": "flint-ternary-40b",
         "unit": "flint-ternary.service",
     },
-    "fusion4": {
-        "endpoint": os.environ.get("PCSALA_ENDPOINT_FUSION4_AGENTIC_V1",
-                                   "http://127.0.0.1:8102"),
-        "model_id": "fusion4-35b",
-        "unit": "fusion4.service",
-    },
-}
+            "endpoint": os.environ.get("PCSALA_ENDPOINT_FUSION4_AGENTIC_V1",
+                                   "http://127.0.0.1:8102"),    },
 
 CONTEXTOS = (4096, 8192, 16384, 32768, 65536, 100000)
 NEEDLE = "The emergency codeword is Xylo9-Zurich."
@@ -97,7 +89,6 @@ FERRAMENTA = [{
 
 RESULTADOS = {}
 
-
 def post(base, path, obj, timeout=3600):
     req = urllib.request.Request(
         base + path, data=json.dumps(obj).encode(),
@@ -109,13 +100,11 @@ def post(base, path, obj, timeout=3600):
     except urllib.error.HTTPError as e:
         return None, time.time() - t0, (e.code, e.read().decode(errors="replace")[:300])
 
-
 def tokenize(base, text):
     d, _w, err = post(base, "/tokenize", {"content": text}, timeout=300)
     if err:
         raise RuntimeError(f"tokenize falhou: {err}")
     return d["tokens"]
-
 
 def vram_usada_mb():
     try:
@@ -127,7 +116,6 @@ def vram_usada_mb():
     except Exception:
         return None
 
-
 def linha(nome, t, wall, extra=""):
     pp = t.get("prompt_per_second") or 0
     gg = t.get("predicted_per_second") or 0
@@ -137,7 +125,6 @@ def linha(nome, t, wall, extra=""):
     print(f"    geracao: {t.get('predicted_n', 0):>6} tok em "
           f"{(t.get('predicted_ms', 0) or 0)/1000:7.2f}s -> {gg:>8.2f} tok/s")
     print(f"    total  : {wall:7.2f}s{extra}")
-
 
 def chat(base, msg, max_tokens=512, temperature=0.2, tools=None):
     payload = {
@@ -149,7 +136,6 @@ def chat(base, msg, max_tokens=512, temperature=0.2, tools=None):
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
     return post(base, "/v1/chat/completions", payload)
-
 
 def tarefas(base):
     print("=== TAREFAS (tok/s por tarefa) ===", flush=True)
@@ -179,30 +165,25 @@ def tarefas(base):
               flush=True)
     return 0
 
-
 def n_ctx_servidor(base):
     props, err = get(base, "/props")
     if err or not props:
         return None
     return props.get("default_generation_settings", {}).get("n_ctx")
 
-
 FRASE = ("Registo {i} do modulo {m}: janela deslizante {j}, fila {f}, "
          "verificacao {v} (selo {s}).\n")
-
 
 def _frases(base, inicio, qtd, selo):
     return "".join(FRASE.format(i=i, m=i % 11, j=i % 97, f=i % 5,
                                 v=(i * 7 % 13) + 1, s=selo)
                    for i in range(inicio, inicio + qtd))
 
-
 def _custo_por_frase(base, selo):
     """Tokens por frase medidos numa amostra: evita tokenizar o corpo todo
     a cada frase (o construtor antigo era O(n^2) e dava horas a 100k)."""
     amostra = _frases(base, 0, 256, selo)
     return len(tokenize(base, amostra)) / 256.0
-
 
 def prompt_contexto(base, alvo, custo=None, selo=None):
     """Contexto com ~`alvo` tokens, unico por execucao (frases numeradas).
@@ -222,7 +203,6 @@ def prompt_contexto(base, alvo, custo=None, selo=None):
         corpo = _frases(base, 0, qtd, selo)
         n = len(tokenize(base, corpo))
     return corpo, n
-
 
 def escala(base, ctx_max=None, ctx_min=None, n_predict=32):
     print("=== ESCALA DE CONTEXTO (prefill e decode por tamanho) ===", flush=True)
@@ -281,7 +261,6 @@ def escala(base, ctx_max=None, ctx_min=None, n_predict=32):
               flush=True)
     return 0
 
-
 def ferramentas(base, repeticoes=3):
     print("=== TOOL CALLING (--jinja) ===", flush=True)
     ok = 0
@@ -316,7 +295,6 @@ def ferramentas(base, repeticoes=3):
     print(f"  resultado: {ok}/{repeticoes} tool calls validos", flush=True)
     return 0 if ok == repeticoes else 1
 
-
 def build_agulha(base, n_ctx):
     """Contexto com agulha a meio, dimensionado por estimativa (1-2 tokenizacoes)."""
     selo = uuid.uuid4().hex[:10]
@@ -333,7 +311,6 @@ def build_agulha(base, n_ctx):
         corpo = NL.join(linhas)
         n = len(tokenize(base, corpo + PERGUNTA))
     return corpo + PERGUNTA, n
-
 
 def agulha(base, n_ctx=None):
     print("=== AGULHA NO PALHEIRO + FRONTEIRA DO CONTEXTO ===", flush=True)
@@ -374,14 +351,12 @@ def agulha(base, n_ctx=None):
     print(f"  RESULTADO={'PASS' if ok else 'FAIL'}", flush=True)
     return 0 if ok else 1
 
-
 def get(base, path, timeout=60):
     try:
         with urllib.request.urlopen(base + path, timeout=timeout) as r:
             return json.loads(r.read().decode()), None
     except urllib.error.HTTPError as e:
         return None, (e.code, e.read().decode(errors="replace")[:300])
-
 
 def main():
     ap = argparse.ArgumentParser(description="bench do slot GPU (P40)")
@@ -424,7 +399,6 @@ def main():
             json.dump(RESULTADOS, f, indent=1, ensure_ascii=False)
         print(f"# resultados JSON: {args.json}", flush=True)
     return rc
-
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -29,7 +29,6 @@ CLI ./pcsala models ──► ModelCoordinator (model_manager.py)
 | qwen36-q4 | GPU | gpu-triage-v1 | qwen36-q4.service | 192.168.1.184:8098 |
 | qwen36-q3 | GPU | gpu-triage-v1 | qwen36-q3.service | 192.168.1.184:8096 |
 | qwen38-gyro-s | GPU | gpu-triage-v1 | qwen38-gyro-s.service | 127.0.0.1:8081 |
-| ttf-qwen38 | GPU | gpu-triage-v1 | ttf-qwen38-27b.service | 127.0.0.1:8108 |
 | bonsai-27b-gpu | GPU | gpu-triage-v1 | bonsai2-27b.service | 127.0.0.1:8080 |
 | qwen3-30b-a3b-cpu | CPU | cpu-triage-v1 | qwen3-30b-a3b-cpu.service | 127.0.0.1:8109 |
 | local-maple | CPU | cpu-triage-v1 | local-maple.service | 127.0.0.1:8193 |
@@ -39,7 +38,7 @@ CLI ./pcsala models ──► ModelCoordinator (model_manager.py)
 | phi35-mini-cpu | CPU | cpu-triage-v1 | phi35-mini-cpu.service | 127.0.0.1:8106 |
 | bonsai2-cpu | CPU | cpu-triage-v1 | bonsai2-cpu.service | 127.0.0.1:8090 |
 
-Os modelos GPU grandes (`qwen36-q4`, `qwen36-q3`, `qwen38-gyro-s`, `ttf-qwen38`, `bonsai-27b-gpu`) partilham
+Os modelos GPU grandes (`qwen36-q4`, `qwen36-q3`, `qwen38-gyro-s`, `bonsai-27b-gpu`) partilham
 `exclusive_group="gpu-slot-1"`: apenas um fica carregado de cada vez.
 
 ## Troca de GPU
@@ -50,7 +49,6 @@ A GPU é exclusiva (`shared: false` para modelos GPU). `switch` para o modelo de
 ./pcsala models switch qwen36-q4     # GPU + CPU MoE offload (secundário, testado)
 ./pcsala models switch qwen36-q3     # GPU primário
 ./pcsala models switch qwen38-gyro-s # Strata
-./pcsala models switch ttf-qwen38    # ttf-home llama.cpp
 ./pcsala models switch bonsai-27b-gpu # PrismML
 ```
 
